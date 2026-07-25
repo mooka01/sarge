@@ -1,0 +1,26 @@
+# Large corpus binaries — downloaded TMs, extracted page images, OCR output, index DBs
+corpus/
+*.pdf
+*.sqlite
+*.sqlite3
+*.db
+
+# Intake session logs (local data, not source)
+sessions/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / editor
+Thumbs.db
+.DS_Store
+dist/
+ocr_batch.log
+ocr_batch.err
+*.log
+config.json
+truck.json
+AS_BUILT_CONFIGURATION.md
