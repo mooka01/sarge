@@ -27,3 +27,6 @@ AS_BUILT_CONFIGURATION.md
 
 # Personal correspondence (FOIA requests etc.) — never publish
 foia/
+
+# Hero-art master (docs/img/hero.jpg is the committed export)
+ai_git_image.png
