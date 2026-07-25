@@ -596,6 +596,12 @@ button { font: inherit; }
       <div class="row"><span class="lbl">tier 2</span>
         <label class="chk"><input type="checkbox" id="forumsChk">
           live-search Steel Soldiers (anecdotal)</label></div>
+      <div class="row"><span class="lbl">mic</span>
+        <select id="micModeSel">
+          <option value="ptt">hold-to-talk (push)</option>
+          <option value="open">open mic — full duplex</option>
+          <option value="wake">open mic + wake word ("SARGE …")</option>
+        </select></div>
       <div class="row"><span class="lbl">voice</span>
         <select id="ttsMode">
           <option value="auto">speak replies to spoken input</option>
@@ -877,8 +883,15 @@ const PHASES = {
   error: "▮ transmission error",
 };
 function setStatus(phase) {
-  statusline.innerHTML = phase
-    ? '<span class="blink">' + (PHASES[phase] || phase) + "…</span>" : "";
+  if (phase) {
+    statusline.innerHTML =
+      '<span class="blink">' + (PHASES[phase] || phase) + "…</span>";
+  } else if (typeof openArmed !== "undefined" && openArmed) {
+    statusline.innerHTML = '<span style="color:#ff5f56">◉</span> open mic hot' +
+      (micModeSel.value === "wake" ? " — say “SARGE, …”" : " — barge in anytime");
+  } else {
+    statusline.innerHTML = "";
+  }
 }
 /* citation chips — tap deploys, right-click opens the page image view */
 feed.addEventListener("click", e => {
@@ -1433,38 +1446,137 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const micOk = !!SR && window.isSecureContext;
 const micBtn = $("micBtn"), fabMic = $("fabMic");
 const ttsMode = $("ttsMode"), ttsVoice = $("ttsVoice"), ttsRate = $("ttsRate");
+const micModeSel = $("micModeSel");
 const hasTTS = "speechSynthesis" in window;
+let ELEVEN = { available: false, voices: [] };
 ttsMode.value = localStorage.getItem("ttsMode") || "auto";
 ttsMode.onchange = () => localStorage.setItem("ttsMode", ttsMode.value);
 ttsRate.value = localStorage.getItem("ttsRate") || "1";
 ttsRate.onchange = () => localStorage.setItem("ttsRate", ttsRate.value);
 ttsVoice.onchange = () => localStorage.setItem("ttsVoice", ttsVoice.value);
+micModeSel.value = localStorage.getItem("micMode") || "ptt";
+micModeSel.onchange = () => {
+  localStorage.setItem("micMode", micModeSel.value);
+  disarmOpen(); micTitles();
+};
 function loadVoices() {
   const cur = localStorage.getItem("ttsVoice") || "";
   ttsVoice.innerHTML = '<option value="">system default voice</option>';
-  speechSynthesis.getVoices()
-    .filter(v => v.lang && v.lang.toLowerCase().startsWith("en"))
-    .forEach(v => {
+  if (hasTTS)
+    speechSynthesis.getVoices()
+      .filter(v => v.lang && v.lang.toLowerCase().startsWith("en"))
+      .forEach(v => {
+        const o = document.createElement("option");
+        o.value = v.voiceURI;
+        o.textContent = v.name.replace(/^(Microsoft|Google) /, "") + " · " + v.lang;
+        if (v.voiceURI === cur) o.selected = true;
+        ttsVoice.appendChild(o);
+      });
+  if (ELEVEN.available && ELEVEN.voices.length) {
+    const g = document.createElement("optgroup");
+    g.label = "ElevenLabs — API key · pay per use";
+    for (const v of ELEVEN.voices) {
       const o = document.createElement("option");
-      o.value = v.voiceURI;
-      o.textContent = v.name.replace(/^(Microsoft|Google) /, "") + " · " + v.lang;
-      if (v.voiceURI === cur) o.selected = true;
-      ttsVoice.appendChild(o);
-    });
+      o.value = "11:" + v.id; o.textContent = v.name;
+      if (o.value === cur) o.selected = true;
+      g.appendChild(o);
+    }
+    ttsVoice.appendChild(g);
+  }
 }
 if (hasTTS) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+fetch("/api/tts/voices").then(r => r.json())
+  .then(j => { ELEVEN = j; loadVoices(); })
+  .catch(() => {});
 
-function speakText(t) {
-  if (!hasTTS || !t) return;
-  const u = new SpeechSynthesisUtterance(t);
-  const v = speechSynthesis.getVoices()
-    .find(x => x.voiceURI === (localStorage.getItem("ttsVoice") || ""));
-  if (v) u.voice = v;
-  u.rate = parseFloat(ttsRate.value || "1");
-  speechSynthesis.speak(u);
+/* ------------- speech output: one queue, two mouths ------------------
+   browser speechSynthesis (free) or ElevenLabs via the local relay
+   (BYO key, never exposed to the page). Sentences play in order;
+   cancel() is the barge-in. Everything spoken is remembered briefly so
+   the open mic can recognize its own echo and ignore it. */
+const recentTTS = [];
+function noteTTS(text) {
+  recentTTS.push({ t: Date.now(),
+                   words: new Set(text.toLowerCase().match(/[a-z0-9']+/g) || []) });
+  while (recentTTS.length && Date.now() - recentTTS[0].t > 30000)
+    recentTTS.shift();
 }
+const speech = {
+  q: [], active: false, curAudio: null, gen: 0,
+  enqueue(text) {
+    if (!text) return;
+    noteTTS(text);
+    const v = localStorage.getItem("ttsVoice") || "";
+    if (v.startsWith("11:")) {
+      const last = this.q[this.q.length - 1];
+      if (last && last.eleven && !last.started &&
+          last.text.length + text.length < 240) {
+        last.text += " " + text;         /* coalesce tiny sentences: fewer API calls */
+      } else {
+        this.q.push({ text: text, eleven: v.slice(3) });
+      }
+    } else if (hasTTS) {
+      this.q.push({ text: text, eleven: null });
+    } else { return; }
+    this.pump();
+  },
+  async pump() {
+    if (this.active) return;
+    this.active = true;
+    const myGen = this.gen;
+    while (this.q.length && this.gen === myGen) {
+      const item = this.q.shift();
+      item.started = true;
+      try {
+        if (item.eleven) await this.playEleven(item, myGen);
+        else await this.playBrowser(item);
+      } catch (e) {}
+    }
+    this.active = false;
+  },
+  playBrowser(item) {
+    return new Promise(res => {
+      const u = new SpeechSynthesisUtterance(item.text);
+      const v = speechSynthesis.getVoices()
+        .find(x => x.voiceURI === (localStorage.getItem("ttsVoice") || ""));
+      if (v) u.voice = v;
+      u.rate = parseFloat(ttsRate.value || "1");
+      u.onend = u.onerror = () => res();
+      speechSynthesis.speak(u);
+    });
+  },
+  async playEleven(item, myGen) {
+    const r = await fetch("/api/tts", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: item.text, voice: item.eleven }),
+    });
+    if (!r.ok || this.gen !== myGen) return;
+    const blob = await r.blob();
+    if (this.gen !== myGen) return;
+    await new Promise(res => {
+      const a = new Audio(URL.createObjectURL(blob));
+      a.playbackRate = parseFloat(ttsRate.value || "1");
+      this.curAudio = a;
+      a.onended = a.onerror = () => { URL.revokeObjectURL(a.src); res(); };
+      a.play().catch(() => res());
+    });
+    this.curAudio = null;
+  },
+  cancel() {
+    this.gen++;
+    this.q.length = 0;
+    if (hasTTS) speechSynthesis.cancel();
+    if (this.curAudio) { try { this.curAudio.pause(); } catch (e) {} }
+    this.curAudio = null;
+  },
+  speaking() {
+    return this.q.length > 0 || this.curAudio !== null ||
+           (hasTTS && speechSynthesis.speaking);
+  },
+};
+function speakText(t) { speech.enqueue(t); }
 $("ttsTest").onclick = () => {
-  speechSynthesis.cancel();
+  speech.cancel();
   speakText("SARGE online. Specs go on the board, soldier — I just point at them. WHAT'S BROKE?");
 };
 
@@ -1484,7 +1596,7 @@ function stripForSpeech(t) {
 }
 /* sentence-buffered streaming: speak as sentences complete, not at end */
 let ttsStream = null;
-function ttsStreamStart() { speechSynthesis.cancel(); ttsStream = { buf: "" }; }
+function ttsStreamStart() { speech.cancel(); ttsStream = { buf: "" }; }
 function ttsStreamFeed(text) {
   if (!ttsStream) return;
   ttsStream.buf += text;
@@ -1530,7 +1642,7 @@ function finishRec() {
 }
 function startRec(btn) {
   if (!micOk || busy || recActive) return;
-  speechSynthesis.cancel();               /* barge-in */
+  speech.cancel();                        /* barge-in */
   recBtn = btn; recFinal = "";
   rec = new SR();
   rec.continuous = true;
@@ -1556,26 +1668,140 @@ function startRec(btn) {
     beep(980, .06);
   } catch (e) { stopRec(); }
 }
-function attachPTT(btn) {
-  btn.addEventListener("pointerdown", e => { e.preventDefault(); startRec(btn); });
-  btn.addEventListener("pointerup", () => { if (recActive && rec) rec.stop(); });
-  btn.addEventListener("pointercancel", stopRec);
+/* ------------------- full duplex: open mic + wake word ----------------
+   Open mic keeps recognition hot continuously (auto-restarting around
+   the browser's silence timeouts). Finalized utterances are screened:
+   our own TTS echo is dropped (word-overlap against what was just
+   spoken), "stop/quiet" kills playback, wake mode requires "SARGE …".
+   Speaking while SARGE is mid-reply aborts the stream and asks the new
+   question — true barge-in. A headset beats speakers for echo; the
+   filter covers honest speaker use. */
+let openArmed = false, openRec = null;
+function micTitles() {
+  const m = micModeSel.value;
+  micBtn.title = fabMic.title =
+    m === "ptt" ? "hold to talk — release sends, Esc cancels" :
+    m === "open" ? "tap to arm/disarm open mic — full duplex, barge in anytime" :
+    "tap to arm — say “SARGE, …” to command";
+}
+function openUI(on) {
+  micBtn.classList.toggle("rec", on);
+  fabMic.classList.toggle("rec", on);
+  if (!on) { recToast.classList.remove("on"); recToast.textContent = ""; }
+  setStatus(null);
+}
+function armOpen() {
+  if (!micOk || openArmed) return;
+  openArmed = true; openUI(true); beep(980, .06);
+  startOpenRec();
+}
+function disarmOpen() {
+  const was = openArmed;
+  openArmed = false;
+  try { if (openRec) openRec.abort(); } catch (e) {}
+  openRec = null; openUI(false);
+  if (was) beep(520, .05);
+}
+function startOpenRec() {
+  if (!openArmed) return;
+  openRec = new SR();
+  openRec.continuous = true;
+  openRec.interimResults = true;
+  openRec.lang = navigator.language || "en-US";
+  openRec.onresult = ev => {
+    let interim = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (r.isFinal) handleUtterance(r[0].transcript);
+      else interim += r[0].transcript;
+    }
+    interim = interim.trim();
+    recToast.classList.toggle("on", !!interim);
+    recToast.textContent = interim;
+  };
+  openRec.onerror = ev => {
+    if (ev.error === "not-allowed" || ev.error === "service-not-allowed")
+      disarmOpen();
+  };
+  openRec.onend = () => { if (openArmed) setTimeout(startOpenRec, 250); };
+  try { openRec.start(); } catch (e) {}
+}
+function echoLike(words) {
+  if (words.length < 3) return false;
+  let best = 0;
+  for (const r of recentTTS) {
+    let hit = 0;
+    for (const w of words) if (r.words.has(w)) hit++;
+    best = Math.max(best, hit / words.length);
+  }
+  return best > 0.7;
+}
+async function interruptAndSend(text) {
+  if (sendAbort) sendAbort.abort();
+  speech.cancel();
+  for (let i = 0; i < 40 && busy; i++)
+    await new Promise(r => setTimeout(r, 50));
+  if (!busy) send(text, { spoken: true });
+}
+function handleUtterance(t) {
+  t = (t || "").replace(/\s+/g, " ").trim();
+  if (!t) return;
+  const words = t.toLowerCase().match(/[a-z0-9']+/g) || [];
+  if (/^(?:hey |ok )?(?:sarge[,.!? ]*)?(?:stop|quiet|shut up|silence)[.!]?$/i.test(t)) {
+    if (speech.speaking() || busy) {
+      if (sendAbort) sendAbort.abort();
+      speech.cancel(); beep(440, .06);
+    }
+    return;
+  }
+  if (echoLike(words)) return;
+  if (micModeSel.value === "wake") {
+    const m = t.match(/^(?:hey |ok )?sarge[,.!? ]+(.+)$/i);
+    if (!m) return;
+    t = m[1].trim();
+    if (!t) return;
+    beep(1320, .05);
+  } else if (words.length < 2) {
+    return;                              /* open-mic noise guard */
+  }
+  recToast.classList.remove("on");
+  if (busy) { interruptAndSend(t); return; }
+  speech.cancel();
+  send(t, { spoken: true });
+}
+function attachMic(btn) {
+  btn.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    if (micModeSel.value === "ptt") startRec(btn);
+  });
+  btn.addEventListener("pointerup", () => {
+    if (micModeSel.value === "ptt") { if (recActive && rec) rec.stop(); }
+    else { openArmed ? disarmOpen() : armOpen(); }
+  });
+  btn.addEventListener("pointercancel", () => {
+    if (micModeSel.value === "ptt") stopRec();
+  });
   btn.addEventListener("contextmenu", e => e.preventDefault());
 }
 if (micOk) {
   micBtn.disabled = false; fabMic.hidden = false;
-  micBtn.title = fabMic.title = "hold to talk — release sends, Esc cancels";
-  attachPTT(micBtn); attachPTT(fabMic);
+  attachMic(micBtn); attachMic(fabMic);
+  micTitles();
 } else {
   micBtn.disabled = true; fabMic.hidden = true;
   micBtn.title = !window.isSecureContext
     ? "VOICE needs HTTPS or localhost — over Tailscale, enable its HTTPS certs (see VOICE_WHITEBOARD_DESIGN.md)"
     : "no speech recognition in this browser — Chrome/Edge/Android have it free, or just type";
 }
-addEventListener("keydown", e => { if (e.key === "Escape" && recActive) stopRec(); });
+addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    if (recActive) stopRec();
+    if (openArmed) disarmOpen();
+  }
+});
 
 /* =================================================================== chat */
-let busy = false;
+let busy = false, sendAbort = null;
 async function send(text, opts) {
   if (busy || !text.trim()) return;
   opts = opts || {};
@@ -1602,11 +1828,13 @@ async function send(text, opts) {
   const body = ai.querySelector(".body");
   body.innerHTML = '<span style="color:var(--ink-dim)">▮ transmitting…</span>';
   setStatus("retrieving");
-  let raw = "", fed = 0, problems = null, valDone = false;
+  let raw = "", fed = 0, problems = null, valDone = false, aborted = false;
   if (wantTTS) ttsStreamStart();
+  sendAbort = new AbortController();
   try {
     const r = await fetch("/api/chat", {
       method: "POST", headers: { "Content-Type": "application/json" },
+      signal: sendAbort.signal,
       body: JSON.stringify({
         chat_id: chatId, message: text, board: true, origin: ORIGIN,
         voice: spoken,
@@ -1642,10 +1870,18 @@ async function send(text, opts) {
       beep(880, .05); setTimeout(() => beep(1170, .07), 100);
     }
   } catch (e) {
-    body.textContent = "CONNECTION ERROR: " + e;
-    lamp("lampVal", "err");
+    if (e && e.name === "AbortError") {
+      aborted = true;
+      body.innerHTML = renderRich(raw.split("␞")[0]) +
+        ' <span style="color:var(--ink-dim)">[interrupted]</span>';
+    } else {
+      body.textContent = "CONNECTION ERROR: " + e;
+      lamp("lampVal", "err");
+    }
   } finally {
-    if (wantTTS) ttsStreamEnd(problems);
+    if (wantTTS && !aborted) ttsStreamEnd(problems);
+    else ttsStream = null;
+    sendAbort = null;
     busy = false; cmdline.disabled = sendBtn.disabled = false;
     setStatus(null);
     if (!isMobile()) cmdline.focus();

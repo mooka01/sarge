@@ -224,6 +224,21 @@ with retrieval context, ~20k output.
 3. **Full duplex + upgrades.** VAD, barge-in, wake word, headset
    tuning; paid ASR/TTS adapters; OpenAI-compatible LLM adapter and
    provider matrix docs.
+   **PARTIALLY SHIPPED 2026-07-25:** mic modes in mission config —
+   hold-to-talk / open mic (full duplex) / open mic + wake word
+   ("SARGE, …"). Open mic auto-restarts around browser silence
+   timeouts; finalized utterances are screened (own-TTS echo dropped by
+   word-overlap against the last 30 s of speech; <2-word noise guard;
+   "stop/quiet" cancels playback). Barge-in is real: speaking mid-reply
+   aborts the in-flight stream (partial reply kept, marked
+   [interrupted]) and sends the new utterance. First paid adapter:
+   **ElevenLabs TTS** via a local relay (`/api/tts`, `/api/tts/voices`)
+   — key in `ELEVENLABS_API_KEY` env var, never sent to the browser;
+   voices appear in the speaker picker when the key is present; flash
+   model, sentence-coalesced calls, absent key degrades to the free
+   browser voice. Speaker echo is filtered but a headset is still the
+   recommended rig. Remaining for phase 3: paid ASR adapters (iOS
+   path), OpenAI-compatible LLM adapter + provider matrix docs.
 
 ## 7. Non-goals
 

@@ -12,11 +12,13 @@ Run:  python app.py   →  http://127.0.0.1:8383
 
 import html
 import json
+import os
 import queue
 import re
 import sqlite3
 import threading
 import time
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -698,6 +700,82 @@ def api_board_stats():
         "model": (cfg["claude_model"] if cfg["backend"] == "claude"
                   else cfg["ollama_model"]),
     }), 200, {"Content-Type": "application/json"}
+
+
+# ------------------------------------------------------- TTS relay (11labs)
+# Optional voice-quality upgrade (design doc §3): BYO key, pay-per-use,
+# no middleman — the key lives in the ELEVENLABS_API_KEY env var on the
+# machine running SARGE and never reaches the browser. Absent key = the
+# free browser voice, nothing breaks.
+
+_ELEVEN_VOICES: list | None = None
+
+
+def eleven_key() -> str:
+    return os.environ.get("ELEVENLABS_API_KEY", "").strip()
+
+
+@app.route("/api/tts/voices")
+def api_tts_voices():
+    global _ELEVEN_VOICES
+    if not eleven_key():
+        return json.dumps({"available": False, "voices": []}), 200, {
+            "Content-Type": "application/json"}
+    if _ELEVEN_VOICES is None:
+        try:
+            req = urllib.request.Request(
+                "https://api.elevenlabs.io/v1/voices",
+                headers={"xi-api-key": eleven_key()})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read())
+            _ELEVEN_VOICES = [{"id": v["voice_id"], "name": v["name"]}
+                              for v in data.get("voices", [])]
+        except Exception as e:
+            return json.dumps({"available": True, "voices": [],
+                               "error": str(e)[:120]}), 200, {
+                "Content-Type": "application/json"}
+    return json.dumps({"available": True, "voices": _ELEVEN_VOICES}), 200, {
+        "Content-Type": "application/json"}
+
+
+@app.route("/api/tts", methods=["POST"])
+def api_tts():
+    if not eleven_key():
+        abort(404)
+    d = request.get_json(force=True)
+    text = (d.get("text") or "").strip()[:1200]
+    voice = re.sub(r"[^A-Za-z0-9]", "", d.get("voice") or "")[:40]
+    if not text or not voice:
+        abort(400)
+    payload = {
+        "text": text,
+        "model_id": "eleven_flash_v2_5",       # lowest-latency tier
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+    }
+    req = urllib.request.Request(
+        f"https://api.elevenlabs.io/v1/text-to-speech/{voice}/stream"
+        "?output_format=mp3_22050_32",
+        data=json.dumps(payload).encode(),
+        headers={"xi-api-key": eleven_key(),
+                 "Content-Type": "application/json"})
+    try:
+        upstream = urllib.request.urlopen(req, timeout=60)
+    except Exception as e:
+        return Response(f"TTS upstream error: {e}", status=502,
+                        mimetype="text/plain")
+
+    def relay():
+        try:
+            while True:
+                chunk = upstream.read(8192)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            upstream.close()
+
+    return Response(relay(), mimetype="audio/mpeg",
+                    headers={"Cache-Control": "no-store"})
 
 
 @app.route("/api/pagemeta/<manual>/<int:pdf_page>")
