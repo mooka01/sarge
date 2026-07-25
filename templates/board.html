@@ -1,0 +1,1739 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>SARGE — TACTICAL BOARD</title>
+<style>
+/* ================================================================ tokens */
+:root {
+  --bg: #04070c;
+  --cyan: #53d9ff;
+  --cyan-dim: rgba(83, 217, 255, .28);
+  --cyan-faint: rgba(83, 217, 255, .10);
+  --amber: #ffb454;
+  --green: #4eff9c;
+  --red: #ff5f56;
+  --ink: #cfe8f5;
+  --ink-dim: #6f8fa3;
+  --panel-bg: rgba(8, 18, 28, .88);
+  --mono: "Cascadia Mono", Consolas, "SF Mono", ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 13px/1.5 var(--mono); overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; }
+
+/* ============================================================ background */
+#bg { position: fixed; inset: 0; z-index: 0; }
+/* CRT texture sits BEHIND the content layer (z 4 < frame z 10): the
+   backdrop keeps the phosphor feel while documents stay full-brightness */
+#scan {
+  position: fixed; inset: 0; z-index: 4; pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, rgba(0,0,0,.14) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0,0,0,.55) 100%);
+  animation: flick 7s infinite steps(1);
+}
+@keyframes flick {
+  0%, 100% { opacity: 1; } 92% { opacity: 1; }
+  93% { opacity: .93; } 94% { opacity: 1; } 96.5% { opacity: .96; } 97% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { #scan { animation: none; } }
+
+/* ================================================================ frame */
+#frame {
+  position: relative; z-index: 10; height: 100vh; height: 100dvh;
+  display: grid; grid-template-columns: var(--commsw, 380px) 7px 1fr;
+  grid-template-rows: 46px 1fr 26px;
+  grid-template-areas: "top top top" "comms div stage" "ticker ticker ticker";
+}
+
+/* ---------------------------------------------------- comms/stage divider */
+#divider {
+  grid-area: div; cursor: col-resize; user-select: none; touch-action: none;
+  position: relative; z-index: 12; display: flex; align-items: center;
+  justify-content: center;
+  background: linear-gradient(90deg, transparent 0 2px,
+              var(--cyan-faint) 2px 5px, transparent 5px);
+  transition: background .15s;
+}
+#divider:hover { background: rgba(83,217,255,.22); }
+#divider .grip { pointer-events: none; color: var(--ink-dim); font-size: 11px; }
+#divider .grip::before { content: "⋮"; }
+#frame.collapsed { grid-template-columns: 0 18px 1fr; }
+#frame.collapsed #comms { display: none; }
+#frame.collapsed #divider { cursor: pointer; background: rgba(83,217,255,.10); }
+#frame.collapsed #divider:hover { background: rgba(83,217,255,.28); }
+#frame.collapsed #divider .grip::before { content: "»"; color: var(--cyan);
+  font-size: 14px; }
+
+/* -------------------------------------------------------------- top bar */
+#topbar {
+  grid-area: top; display: flex; align-items: center; gap: 1.2rem;
+  padding: 0 1rem; border-bottom: 1px solid var(--cyan-dim);
+  background: linear-gradient(180deg, rgba(10,22,34,.95), rgba(6,12,20,.85));
+  text-transform: uppercase; letter-spacing: .14em; font-size: 11px;
+  white-space: nowrap;
+}
+#crest { display: flex; align-items: baseline; gap: .6rem; }
+#crest .star { color: var(--amber); font-size: 14px; }
+#crest b { color: var(--cyan); font-size: 14px; letter-spacing: .22em; }
+#crest span { color: var(--ink-dim); }
+#topnav { display: flex; gap: 1rem; min-width: 0; overflow-x: auto;
+  scrollbar-width: none; flex: none; }
+#topnav a { color: var(--ink-dim); text-decoration: none; font-size: 10px;
+  letter-spacing: .16em; padding: .2rem 0; border-bottom: 1px solid transparent; }
+#topnav a:hover { color: var(--cyan); border-bottom-color: var(--cyan-dim); }
+#stats { color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; }
+#stats b { color: var(--ink); font-weight: 600; }
+#topbar .sp { flex: 1; }
+.lamp { display: inline-flex; align-items: center; gap: .35rem; color: var(--ink-dim); }
+.lamp i {
+  width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+  background: #2a3a48; box-shadow: 0 0 6px transparent; transition: all .3s;
+}
+.lamp.ok i    { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.lamp.warn i  { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.lamp.err i   { background: var(--red);   box-shadow: 0 0 8px var(--red); }
+#clock { color: var(--cyan); font-size: 13px; letter-spacing: .18em; }
+.tbtn {
+  background: transparent; color: var(--ink-dim); border: 1px solid var(--cyan-dim);
+  border-radius: 3px; padding: .18rem .55rem; cursor: pointer;
+  letter-spacing: .1em; text-transform: uppercase; font-size: 10px;
+  transition: all .15s;
+}
+.tbtn:hover { color: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 8px var(--cyan-faint); }
+.tbtn.armed { color: var(--red); border-color: var(--red); }
+
+/* ---------------------------------------------------------------- comms */
+#comms {
+  grid-area: comms; display: flex; flex-direction: column; min-height: 0;
+  border-right: 1px solid var(--cyan-dim); position: relative;
+  background: linear-gradient(180deg, rgba(6,14,22,.72), rgba(4,9,15,.72));
+  min-width: 0;
+}
+#commshead {
+  padding: .3rem .5rem .3rem .6rem; font-size: 10px; letter-spacing: .22em;
+  color: var(--ink-dim); text-transform: uppercase;
+  border-bottom: 1px solid var(--cyan-faint);
+  display: flex; align-items: center; gap: .5rem;
+}
+#commshead b { color: var(--cyan); }
+#commshead .sp { flex: 1; }
+.hbtn {
+  background: transparent; border: 1px solid transparent; color: var(--ink-dim);
+  cursor: pointer; font: 13px var(--mono); padding: .12rem .45rem;
+  border-radius: 3px; line-height: 1.3;
+}
+.hbtn:hover { color: var(--cyan); border-color: var(--cyan-dim); }
+
+/* -------------------------------------------------------- sessions drawer */
+#sessions {
+  position: absolute; inset: 0; z-index: 25; background: rgba(4,9,15,.97);
+  display: flex; flex-direction: column;
+}
+#sessions[hidden] { display: none; }
+#sesshead {
+  padding: .45rem .6rem .45rem .9rem; display: flex; align-items: center;
+  justify-content: space-between; border-bottom: 1px solid var(--cyan-faint);
+  font-size: 10px; letter-spacing: .22em; color: var(--cyan);
+  text-transform: uppercase;
+}
+#sesslist { flex: 1; overflow-y: auto; padding: .4rem; scrollbar-width: thin;
+  scrollbar-color: var(--cyan-dim) transparent; }
+.sess { padding: .45rem .6rem; border: 1px solid transparent; border-radius: 3px;
+  cursor: pointer; margin-bottom: 2px; }
+.sess:hover { background: rgba(83,217,255,.07); border-color: var(--cyan-faint); }
+.sess.cur { border-color: var(--cyan-dim); background: rgba(83,217,255,.10); }
+.sess .st { font-size: 11.5px; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.sess .sd { font-size: 9.5px; color: var(--ink-dim); letter-spacing: .1em; }
+
+/* -------------------------------------------------- mission config strip */
+#cfgbar { display: flex; gap: .3rem; align-items: center;
+  padding: .25rem .6rem 0; }
+#cfgbar .note { font-size: 9.5px; color: var(--amber); letter-spacing: .06em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+#cfgpanel { padding: .45rem .9rem .1rem; display: grid; gap: .4rem;
+  border-top: 1px solid var(--cyan-faint); }
+#cfgpanel[hidden] { display: none; }
+#cfgpanel .row { display: flex; gap: .5rem; align-items: center; }
+#cfgpanel .lbl { font-size: 9px; letter-spacing: .18em; color: var(--ink-dim);
+  text-transform: uppercase; flex: none; width: 3.6rem; }
+#cfgpanel select {
+  flex: 1; min-width: 0; background: rgba(4,10,16,.9); color: var(--ink);
+  border: 1px solid var(--cyan-dim); border-radius: 3px;
+  padding: .28rem .45rem; font: 11px var(--mono);
+}
+#cfgpanel input[type=checkbox] { accent-color: #53d9ff; }
+#cfgpanel .chk { display: flex; gap: .45rem; align-items: center;
+  font-size: 10.5px; color: var(--ink); }
+#feed { flex: 1; overflow-y: auto; padding: .8rem .9rem; scrollbar-width: thin;
+  scrollbar-color: var(--cyan-dim) transparent; }
+.m { margin: 0 0 1rem; animation: mIn .25s ease-out; }
+@keyframes mIn { from { opacity: 0; transform: translateY(8px); } }
+.m .who {
+  font-size: 9px; letter-spacing: .28em; color: var(--ink-dim);
+  text-transform: uppercase; margin-bottom: .25rem;
+}
+.m.sarge .who { color: var(--cyan); }
+.m.user .who { color: var(--green); text-align: right; }
+.m .body {
+  white-space: pre-wrap; overflow-wrap: break-word; font-size: 12.5px;
+  border-left: 2px solid var(--cyan-dim); padding: .45rem .7rem;
+  background: rgba(83, 217, 255, .04);
+}
+.m.user .body {
+  border-left: 0; border-right: 2px solid rgba(78,255,156,.4);
+  background: rgba(78,255,156,.05); text-align: left;
+}
+.m .body b { color: #fff; }
+.m .val { margin-top: .35rem; font-size: 10.5px; padding-left: .7rem; }
+.m .val .good { color: var(--green); }
+.m .val .bad { color: var(--amber); display: block; }
+.chip {
+  display: inline-block; margin: 1px 2px; padding: .05rem .45rem;
+  background: var(--cyan-faint); color: var(--cyan);
+  border: 1px solid var(--cyan-dim); border-radius: 3px; cursor: pointer;
+  font: 11px var(--mono); letter-spacing: .04em; vertical-align: baseline;
+  transition: all .12s;
+}
+.chip:hover { background: rgba(83,217,255,.25); box-shadow: 0 0 10px var(--cyan-faint); }
+#statusline {
+  min-height: 20px; padding: .15rem .9rem; font-size: 10px;
+  letter-spacing: .2em; color: var(--amber); text-transform: uppercase;
+}
+#statusline .blink { animation: blink 1s infinite steps(2); }
+@keyframes blink { 50% { opacity: .25; } }
+#composer {
+  display: flex; gap: .45rem; padding: .6rem .9rem .8rem;
+  border-top: 1px solid var(--cyan-faint);
+}
+#composer input {
+  flex: 1; min-width: 0; background: rgba(4,10,16,.9); color: var(--ink);
+  border: 1px solid var(--cyan-dim); border-radius: 3px;
+  padding: .5rem .7rem; font: 13px var(--mono); outline: none;
+}
+#composer input:focus { border-color: var(--cyan); box-shadow: 0 0 12px var(--cyan-faint); }
+#composer button {
+  background: rgba(83,217,255,.12); color: var(--cyan);
+  border: 1px solid var(--cyan-dim); border-radius: 3px; cursor: pointer;
+  padding: 0 .8rem; letter-spacing: .12em; text-transform: uppercase; font-size: 11px;
+}
+#composer button:hover:not(:disabled) { background: rgba(83,217,255,.25); }
+#composer button:disabled { opacity: .35; cursor: not-allowed; }
+#micBtn { font-size: 14px; user-select: none; -webkit-user-select: none;
+  touch-action: none; }
+#micBtn:not(:disabled) { color: var(--cyan); }
+#micBtn.rec, #fabMic.rec {
+  color: #ff5f56 !important; border-color: rgba(255,95,86,.65) !important;
+  animation: recpulse 1.1s infinite;
+}
+@keyframes recpulse { 50% { box-shadow: 0 0 16px rgba(255,95,86,.55); } }
+#fabMic {
+  position: fixed; right: 14px;
+  bottom: calc(62px + env(safe-area-inset-bottom));
+  z-index: 30; width: 54px; height: 54px; border-radius: 50%;
+  display: none; align-items: center; justify-content: center;
+  background: rgba(8,18,28,.94); border: 1px solid var(--cyan-dim);
+  color: var(--cyan); font-size: 21px; cursor: pointer;
+  box-shadow: 0 0 20px rgba(83,217,255,.15);
+  user-select: none; -webkit-user-select: none; touch-action: none;
+}
+@media (max-width: 880px) {
+  body[data-mview="board"] #fabMic:not([hidden]) { display: flex; }
+}
+#recToast {
+  position: fixed; top: 52px; left: 50%; transform: translateX(-50%);
+  z-index: 45; background: rgba(8,18,28,.96);
+  border: 1px solid rgba(255,95,86,.5); border-radius: 4px;
+  color: var(--ink); padding: .45rem .9rem; max-width: 86vw;
+  font-size: 12px; display: none; overflow: hidden; white-space: nowrap;
+  text-overflow: ellipsis;
+}
+#recToast.on { display: block; }
+#recToast::before { content: "● REC — "; color: #ff5f56; letter-spacing: .1em; }
+
+/* ---------------------------------------------------------------- stage */
+#stage { grid-area: stage; position: relative; min-width: 0; min-height: 0; padding: 14px; }
+#stage::before, #stage::after,
+#deckwrap::before, #deckwrap::after {
+  content: ""; position: absolute; width: 26px; height: 26px; z-index: 5;
+  border-color: var(--cyan-dim); border-style: solid; pointer-events: none;
+}
+#stage::before { top: 8px; left: 8px; border-width: 1px 0 0 1px; }
+#stage::after { top: 8px; right: 8px; border-width: 1px 1px 0 0; }
+#deckwrap::before { bottom: 8px; left: 8px; border-width: 0 0 1px 1px; }
+#deckwrap::after { bottom: 8px; right: 8px; border-width: 0 1px 1px 0; }
+#deckwrap { position: absolute; inset: 0; pointer-events: none; }
+#deck { display: grid; gap: 12px; height: 100%; min-width: 0;
+  max-width: 100%; overflow: hidden; }
+#deck.n0 { display: none; }
+#deck.n1 { grid-template: 1fr / 1fr; }
+#deck.n2 { grid-template: 1fr / 1fr 1fr; }
+#deck.n3 { grid-template: 1fr 1fr / 1fr 1fr; }
+#deck.n3 .panel:first-child { grid-row: span 2; }
+#deck.n4 { grid-template: 1fr 1fr / 1fr 1fr; }
+#deck.n5 { grid-template: 1fr 1fr / 1fr 1fr 1fr; }
+#deck.n5 .panel:first-child { grid-row: span 2; }
+#deck.n6 { grid-template: 1fr 1fr / 1fr 1fr 1fr; }
+#empty {
+  position: absolute; inset: 0; display: grid; place-content: center;
+  text-align: center; color: var(--ink-dim); letter-spacing: .3em;
+  text-transform: uppercase; font-size: 12px; pointer-events: none;
+}
+#empty .big { font-size: 20px; color: var(--cyan-dim); margin-bottom: .8rem; }
+#empty .sub { letter-spacing: .12em; font-size: 10px; margin-top: .6rem; }
+
+/* ---------------------------------------------------------------- panel */
+.panel {
+  position: relative; display: flex; flex-direction: column;
+  /* min 0 both axes: grid items must never dictate track size — footer
+     and header text ellipsize instead of pushing the deck past the
+     viewport (the mobile clipped-buttons bug) */
+  min-height: 0; min-width: 0;
+  background: var(--panel-bg); border: 1px solid var(--cyan-dim);
+  box-shadow: 0 0 24px rgba(83,217,255,.07), inset 0 0 40px rgba(83,217,255,.03);
+  backdrop-filter: blur(2px);
+}
+.panel::before, .panel::after {
+  content: ""; position: absolute; width: 14px; height: 14px;
+  border-color: var(--cyan); border-style: solid; pointer-events: none; z-index: 3;
+}
+.panel::before { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+.panel::after { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+.panel { transition: border-color .15s, box-shadow .15s; }
+.panel:hover {
+  border-color: rgba(83,217,255,.65);
+  box-shadow: 0 0 34px rgba(83,217,255,.16), inset 0 0 40px rgba(83,217,255,.04);
+}
+.panel.pinned { border-color: rgba(255,180,84,.55); }
+.panel.pinned::before, .panel.pinned::after { border-color: var(--amber); }
+.panel.deploying { animation: deploy .55s cubic-bezier(.2, .85, .3, 1.15); }
+@keyframes deploy {
+  0% { opacity: 0; transform: perspective(1200px) translateZ(-520px) rotateX(20deg) scale(.82);
+       filter: brightness(2.4) saturate(1.5); }
+  60% { opacity: 1; filter: brightness(1.25); }
+  100% { opacity: 1; transform: none; filter: none; }
+}
+.panel.retract { animation: retract .4s ease-in forwards; pointer-events: none; }
+@keyframes retract {
+  to { opacity: 0; transform: perspective(1200px) translateZ(260px) scale(1.05); filter: blur(3px); }
+}
+.panel.flash { animation: flashp .8s ease-out; }
+@keyframes flashp {
+  0% { box-shadow: 0 0 0 3px var(--cyan), 0 0 46px rgba(83,217,255,.5); }
+  100% { box-shadow: 0 0 24px rgba(83,217,255,.07); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel.deploying, .panel.retract, .panel.flash, .m { animation: none; }
+}
+.phead {
+  display: flex; align-items: center; gap: .6rem; padding: .3rem .3rem .3rem .7rem;
+  border-bottom: 1px solid var(--cyan-faint); font-size: 10px;
+  letter-spacing: .12em; text-transform: uppercase; flex: none;
+  overflow: hidden; min-width: 0;
+  background: linear-gradient(90deg, rgba(83,217,255,.10), transparent 60%);
+}
+/* text yields, buttons never do: page label collapses first, then manual */
+.phead .pmanual { color: var(--cyan); font-weight: 600; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 2.5rem; }
+.phead .ppage { color: var(--ink-dim); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; flex: 0 4 auto; min-width: 0; }
+.phead .sp { flex: 1 1 0; min-width: 0; }
+.pb {
+  background: transparent; border: 1px solid transparent; color: var(--ink-dim);
+  cursor: pointer; font-size: 12px; padding: .1rem .38rem; border-radius: 3px;
+  line-height: 1.3; text-decoration: none; flex: none;
+}
+.pb:hover { color: var(--cyan); border-color: var(--cyan-dim); }
+.panel.pinned .pb.pin { color: var(--amber); }
+.pview {
+  flex: 1; overflow: hidden; position: relative; cursor: zoom-in;
+  touch-action: none; background:
+    radial-gradient(circle at 50% 40%, rgba(83,217,255,.05), transparent 70%);
+}
+.pview:active { cursor: grabbing; }
+.pview img {
+  position: absolute; top: 0; left: 0; transform-origin: 0 0;
+  user-select: none; -webkit-user-drag: none; will-change: transform;
+  background: #fff; box-shadow: 0 0 30px rgba(0,0,0,.6);
+}
+.pview .perr {
+  position: absolute; inset: 0; display: grid; place-content: center;
+  color: var(--amber); font-size: 11px; letter-spacing: .1em; text-align: center;
+  padding: 1rem;
+}
+.pfoot {
+  flex: none; padding: .2rem .7rem; font-size: 9.5px; color: var(--ink-dim);
+  letter-spacing: .1em; text-transform: uppercase; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  border-top: 1px solid var(--cyan-faint);
+}
+
+/* --------------------------------------------------------------- ticker */
+#ticker {
+  grid-area: ticker; display: flex; align-items: center; gap: 1.4rem;
+  padding: 0 1rem; font-size: 10px; letter-spacing: .18em;
+  text-transform: uppercase; color: var(--ink-dim); white-space: nowrap;
+  overflow: hidden; border-top: 1px solid var(--cyan-dim);
+  background: rgba(6, 12, 20, .9);
+}
+#ticker .rule { color: var(--amber); flex: none; }
+#tickcites { overflow: hidden; text-overflow: ellipsis; }
+#tickcites span { margin-right: 1.2rem; color: var(--cyan-dim); }
+
+/* --------------------------------------------------------------- expand */
+#expand {
+  position: fixed; inset: 0; z-index: 80; background: rgba(2,5,9,.94);
+  display: flex; flex-direction: column;
+}
+#expand[hidden] { display: none; }
+.xhead {
+  flex: none; display: flex; align-items: center; gap: 1rem;
+  padding: .5rem 1rem; border-bottom: 1px solid var(--cyan-dim);
+  font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+  min-width: 0; overflow: hidden;
+}
+.xhead #xtitle { color: var(--cyan); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; flex: 0 1 auto; min-width: 3rem; }
+.xhead .authnote { color: var(--amber); font-size: 9.5px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; flex: 0 4 auto; min-width: 0; }
+.xhead .sp { flex: 1 1 0; min-width: 0; }
+.xhead .pb { flex: none; }
+#xbody { flex: 1; position: relative; min-height: 0; }
+#xview { position: absolute; inset: 0; overflow: hidden; cursor: grab; touch-action: none; }
+#xview img { position: absolute; top: 0; left: 0; transform-origin: 0 0;
+  user-select: none; -webkit-user-drag: none; background: #fff; }
+.xnav {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 6;
+  background: rgba(6,14,22,.55); color: var(--cyan);
+  border: 1px solid var(--cyan-dim); border-radius: 4px; cursor: pointer;
+  font: 30px/1 var(--mono); padding: 1.1rem .55rem; opacity: .3;
+  transition: opacity .15s, background .15s;
+}
+.xnav:hover { opacity: 1; background: rgba(83,217,255,.18); }
+.xnav:disabled { opacity: .08; cursor: default; }
+.xnav.prev { left: 10px; }
+.xnav.next { right: 10px; }
+@media (pointer: coarse) { .xnav { opacity: .55; } }
+#xhint {
+  position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+  font-size: 9.5px; letter-spacing: .22em; color: var(--ink-dim);
+  text-transform: uppercase; z-index: 6; pointer-events: none;
+}
+
+/* ----------------------------------------------------------------- boot */
+#boot {
+  position: fixed; inset: 0; z-index: 90; background: var(--bg);
+  display: grid; place-content: center; transition: opacity .5s;
+}
+#boot.done { opacity: 0; pointer-events: none; }
+#bootlines { font: 13px/1.9 var(--mono); color: var(--cyan);
+  letter-spacing: .1em; min-width: min(560px, 86vw); }
+#bootlines .ln::before { content: "▸ "; color: var(--ink-dim); }
+#bootlines .cursor { animation: blink .7s infinite steps(2); }
+#bootskip { margin-top: 2rem; color: var(--ink-dim); font-size: 10px;
+  letter-spacing: .3em; text-transform: uppercase; text-align: center; }
+
+/* ------------------------------------------------------ mobile tab bar */
+#mtabs {
+  grid-area: tabs; display: none; grid-template-columns: 1fr 1fr 1fr;
+  border-top: 1px solid var(--cyan-dim); z-index: 15;
+  background: linear-gradient(0deg, rgba(6,12,20,.98), rgba(10,22,34,.95));
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.mtab {
+  background: transparent; border: 0; border-top: 2px solid transparent;
+  color: var(--ink-dim); font: 9.5px var(--mono); letter-spacing: .24em;
+  text-transform: uppercase; cursor: pointer; position: relative;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 2px; padding: 4px 0;
+}
+.mtab .ic { font-size: 15px; line-height: 1; }
+.mtab.active { color: var(--cyan); border-top-color: var(--cyan);
+  background: rgba(83,217,255,.06); }
+#mtabBadge {
+  position: absolute; top: 3px; right: calc(50% - 26px);
+  background: rgba(83,217,255,.16); color: var(--cyan);
+  border: 1px solid var(--cyan-dim); border-radius: 8px; min-width: 16px;
+  padding: 0 3px; font-size: 9px; line-height: 13px;
+}
+#mtabBadge.pulse { animation: bpulse .8s ease-out; }
+@keyframes bpulse {
+  0% { box-shadow: 0 0 0 0 rgba(83,217,255,.7); }
+  100% { box-shadow: 0 0 0 12px rgba(83,217,255,0); }
+}
+
+/* ------------------------------------------------------- mobile sheet */
+#msheet { position: fixed; inset: 0; z-index: 70; display: none; }
+#msheet.open { display: block; }
+#msheet .back { position: absolute; inset: 0; background: rgba(2,5,9,.65); }
+#msheet .sheet {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  background: rgba(6,13,21,.98); border-top: 1px solid var(--cyan-dim);
+  padding: .6rem .9rem calc(.9rem + env(safe-area-inset-bottom));
+  display: grid; gap: .3rem; animation: sheetup .18s ease-out;
+}
+@keyframes sheetup { from { transform: translateY(24%); opacity: 0; } }
+#msheet .shead { font-size: 9px; color: var(--ink-dim); letter-spacing: .3em;
+  text-transform: uppercase; padding: .35rem 0 .1rem; }
+#msheet a, #msheet button {
+  display: flex; gap: .7rem; align-items: center;
+  background: transparent; border: 1px solid var(--cyan-faint);
+  border-radius: 3px; color: var(--ink); text-decoration: none;
+  font: 12px var(--mono); letter-spacing: .14em; text-transform: uppercase;
+  padding: .65rem .8rem; cursor: pointer;
+}
+#msheet a:active, #msheet button:active,
+#msheet a:hover, #msheet button:hover {
+  border-color: var(--cyan-dim); background: rgba(83,217,255,.07);
+}
+
+/* --------------------------------------------------------------- mobile
+   App-style: ONE full-screen view at a time (comms or evidence board),
+   switched by the thumb-reachable tab bar; nav + utilities live in the
+   MORE sheet. */
+@media (max-width: 880px) {
+  #frame, #frame.collapsed {
+    grid-template-columns: 1fr;
+    grid-template-rows: 42px 1fr auto;
+    grid-template-areas: "top" "main" "tabs";
+  }
+  #comms, #stage { grid-area: main; min-height: 0; }
+  #frame.collapsed #comms { display: flex; }
+  body[data-mview="board"] #comms { display: none !important; }
+  body[data-mview="comms"] #stage { display: none; }
+  #mtabs { display: grid; }
+  #divider, #collapseBtn, #ticker { display: none; }
+  #comms { border-right: 0; }
+  #stats, #crest span, #clock, #topnav,
+  #clearBtn, #muteBtn, #newBtn { display: none; }
+  #stage { padding: 10px; }
+  #deck { gap: 8px; }
+  #deck.n2, #deck.n3, #deck.n4, #deck.n5, #deck.n6 { grid-template: 1fr 1fr / 1fr 1fr; }
+  #deck.n3 .panel:first-child, #deck.n5 .panel:first-child { grid-row: auto; }
+  .xnav { padding: 1.6rem .55rem; }
+  /* narrow panels: tighter header, drop the open-page link (the
+     full-screen viewer header carries it) so ⛶ and ✕ always fit */
+  .phead { gap: .3rem; padding-left: .5rem; }
+  .phead .pb { padding: .1rem .28rem; }
+  .phead a.pb { display: none; }
+  /* full-screen viewer header: the governing-rule note moves out of the
+     way on phones so ↗ and ✕ stay reachable */
+  .xhead { gap: .5rem; padding: .5rem .6rem; }
+  .xhead .authnote { display: none; }
+}
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<div id="scan"></div>
+
+<div id="frame">
+  <header id="topbar">
+    <div id="crest"><span class="star">★</span><b>SARGE</b><span>tactical board</span></div>
+    <nav id="topnav">
+      <a href="/search">search</a>
+      <a href="/intake">intake</a>
+      <a href="/knowledge">knowledge</a>
+      <a href="/config">my truck</a>
+    </nav>
+    <div id="stats">corpus initializing…</div>
+    <div class="sp"></div>
+    <span class="lamp" id="lampLink"><i></i>link</span>
+    <span class="lamp" id="lampVal"><i></i>valid</span>
+    <button class="tbtn" id="clearBtn" title="sweep unpinned panels (press twice for ALL)">⊘ clear</button>
+    <button class="tbtn" id="muteBtn" title="audio">♪ on</button>
+    <button class="tbtn" id="newBtn" title="new session">✚ new</button>
+    <span id="clock">--:--:--Z</span>
+  </header>
+
+  <aside id="comms">
+    <div id="commshead">
+      <button class="hbtn" id="sessBtn" title="sessions">☰</button>
+      <span><b>COMMS</b></span>
+      <span class="sp"></span>
+      <span id="sessTag"></span>
+      <button class="hbtn" id="collapseBtn"
+        title="collapse comms — full evidence wall">«</button>
+    </div>
+    <div id="sessions" hidden>
+      <div id="sesshead"><span>sessions</span>
+        <span><button class="hbtn" id="sessNew">＋ new</button>
+        <button class="hbtn" id="sessClose">✕</button></span></div>
+      <div id="sesslist"></div>
+    </div>
+    <div id="feed"></div>
+    <div id="statusline"></div>
+    <div id="cfgbar">
+      <button class="hbtn" id="cfgBtn" title="mission config (brain · scope · intake · tier 2)">⚙</button>
+      <button class="hbtn" id="photoBtn" title="attach photos (gauges, leaks, part markings)">📷</button>
+      <button class="hbtn" id="helpBtn" title="draft a forum help post from this session">📢</button>
+      <span class="note" id="attachNote"></span>
+      <input type="file" id="photoInput" accept="image/*" multiple hidden>
+    </div>
+    <div id="cfgpanel" hidden>
+      <div class="row"><span class="lbl">brain</span>
+        <select id="backendSel">
+          <option value="claude">Claude API (online, best)</option>
+          <option value="ollama">Local / Ollama (offline)</option>
+        </select></div>
+      <div class="row"><span class="lbl">scope</span>
+        <select id="scopeSel">
+          <option value="both">Chassis + habitat</option>
+          <option value="chassis">Chassis only</option>
+          <option value="habitat">Habitat (RV box) only</option>
+        </select></div>
+      <div class="row"><span class="lbl">intake</span>
+        <select id="intakeSel"><option value="">no intake attached</option></select></div>
+      <div class="row"><span class="lbl">tier 2</span>
+        <label class="chk"><input type="checkbox" id="forumsChk">
+          live-search Steel Soldiers (anecdotal)</label></div>
+      <div class="row"><span class="lbl">voice</span>
+        <select id="ttsMode">
+          <option value="auto">speak replies to spoken input</option>
+          <option value="always">speak every reply</option>
+          <option value="off">never speak</option>
+        </select></div>
+      <div class="row"><span class="lbl">speaker</span>
+        <select id="ttsVoice"><option value="">system default voice</option></select></div>
+      <div class="row"><span class="lbl">rate</span>
+        <input type="range" id="ttsRate" min="0.8" max="1.4" step="0.05"
+          style="flex:1;padding:0;background:transparent;border:0">
+        <button type="button" class="hbtn" id="ttsTest">▶ test</button></div>
+    </div>
+    <form id="composer">
+      <button type="button" id="micBtn" disabled>🎤</button>
+      <input id="cmdline" autocomplete="off" spellcheck="false"
+        placeholder="report malfunction + measurements, soldier…">
+      <button type="submit" id="sendBtn">send</button>
+    </form>
+  </aside>
+
+  <div id="divider" title="drag to resize — double-click resets"><span class="grip"></span></div>
+
+  <section id="stage">
+    <div id="deckwrap"></div>
+    <div id="deck" class="n0"></div>
+    <div id="empty">
+      <div class="big">▣ ▣ ▣</div>
+      <div>evidence board — awaiting deployment</div>
+      <div class="sub">SARGE deploys manual pages here as they are cited ·
+        tap any citation chip to deploy manually</div>
+    </div>
+  </section>
+
+  <footer id="ticker">
+    <span class="rule">⚠ the page image is the authority — AI is advisory</span>
+    <span id="tickcites"></span>
+  </footer>
+
+  <nav id="mtabs">
+    <button class="mtab active" id="mtabComms" type="button">
+      <span class="ic">▤</span>comms</button>
+    <button class="mtab" id="mtabBoard" type="button">
+      <span class="ic">▣</span>board<span id="mtabBadge" hidden>0</span></button>
+    <button class="mtab" id="mtabMore" type="button">
+      <span class="ic">☰</span>more</button>
+  </nav>
+</div>
+
+<button id="fabMic" hidden>🎤</button>
+<div id="recToast"></div>
+
+<div id="msheet">
+  <div class="back" id="msheetBack"></div>
+  <div class="sheet">
+    <div class="shead">navigate</div>
+    <a href="/search">🔍 search</a>
+    <a href="/intake">📋 intake</a>
+    <a href="/knowledge">📚 knowledge</a>
+    <a href="/config">🚚 my truck</a>
+    <div class="shead">session</div>
+    <button type="button" id="msSessions">☰ sessions</button>
+    <button type="button" id="msNew">✚ new session</button>
+    <button type="button" id="msClear">⊘ clear board</button>
+    <button type="button" id="msMute">♪ sound</button>
+  </div>
+</div>
+
+<div id="expand" hidden>
+  <div class="xhead">
+    <span id="xtitle"></span>
+    <span class="authnote">governing rule: verify numbers against THIS image</span>
+    <span class="sp"></span>
+    <a class="pb" id="xopen" target="_blank" rel="noopener">open page ↗</a>
+    <button class="pb" id="xclose">✕ close</button>
+  </div>
+  <div id="xbody">
+    <div id="xview"><img id="ximg" alt=""></div>
+    <button class="xnav prev" id="xprev" title="previous page (←)">‹</button>
+    <button class="xnav next" id="xnext" title="next page (→)">›</button>
+    <div id="xhint">scroll · pinch · double-tap zoom — swipe or ‹ › to turn pages — esc closes</div>
+  </div>
+</div>
+
+<div id="boot"><div>
+  <div id="bootlines"></div>
+  <div id="bootskip">tap to skip</div>
+</div></div>
+
+<script>
+/* Failsafe layer — registered BEFORE the main script so that if it dies
+   (older browser, insecure-context API gap), the operator is never
+   stranded on the boot screen: the fault is shown and a tap continues. */
+window.__bootFault = function (msg) {
+  var b = document.getElementById("boot");
+  if (!b) return;
+  var d = document.createElement("div");
+  d.style.cssText = "color:#ff5f56;margin-top:1.2rem;font:12px/1.5 monospace;" +
+                    "max-width:80vw;letter-spacing:.05em";
+  d.textContent = "⚠ BOOT FAULT: " + msg + " — tap anywhere to continue";
+  (b.firstElementChild || b).appendChild(d);
+  b.addEventListener("click", function () { b.remove(); });
+};
+window.addEventListener("error", function (e) {
+  window.__bootFault(e.message || "script error");
+});
+window.addEventListener("unhandledrejection", function (e) {
+  window.__bootFault((e.reason && e.reason.message) || e.reason || "async fault");
+});
+</script>
+<script>
+"use strict";
+/* ================================================================ session */
+function uuid() {
+  /* crypto.randomUUID needs a secure context — absent over plain-HTTP
+     LAN/Tailscale. getRandomValues works everywhere: RFC 4122 v4 by hand. */
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 15) | 64; b[8] = (b[8] & 63) | 128;
+  const h = Array.from(b, x => x.toString(16).padStart(2, "0")).join("");
+  return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) +
+         "-" + h.slice(16, 20) + "-" + h.slice(20);
+}
+const params = new URLSearchParams(location.search);
+let chatId = params.get("chat");
+if (!(chatId && /^[0-9a-f-]{36}$/.test(chatId)))
+  chatId = localStorage.getItem("boardChat") || uuid();
+localStorage.setItem("boardChat", chatId);
+history.replaceState(null, "", "/?chat=" + chatId);
+const ORIGIN = uuid();
+
+/* skip handler armed immediately — never gated behind fetches or typing */
+let bootSkip = false;
+document.getElementById("boot").addEventListener("click", () => {
+  bootSkip = true;
+});
+
+const $ = id => document.getElementById(id);
+const feed = $("feed"), deck = $("deck"), empty = $("empty");
+const statusline = $("statusline"), cmdline = $("cmdline"), sendBtn = $("sendBtn");
+$("sessTag").textContent = "SESS " + chatId.slice(0, 8).toUpperCase();
+
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ================================================================== audio */
+let actx = null;
+let muted = localStorage.getItem("boardMute") === "1";
+function beep(f, d, type, vol) {
+  if (muted) return;
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type || "square"; o.frequency.value = f || 880;
+    const t = actx.currentTime;
+    g.gain.setValueAtTime(vol || .03, t);
+    g.gain.exponentialRampToValueAtTime(.0001, t + (d || .06));
+    o.connect(g); g.connect(actx.destination);
+    o.start(t); o.stop(t + (d || .06));
+  } catch (e) {}
+}
+function updateMuteBtn() { $("muteBtn").textContent = muted ? "♪ off" : "♪ on"; }
+$("muteBtn").onclick = () => {
+  muted = !muted; localStorage.setItem("boardMute", muted ? "1" : "0");
+  updateMuteBtn(); if (!muted) beep(990, .05);
+};
+updateMuteBtn();
+
+/* ============================================================= background */
+(function background() {
+  const cv = $("bg"), cx = cv.getContext("2d");
+  let W, H, DPR, pts = [];
+  function resize() {
+    DPR = Math.min(devicePixelRatio || 1, 2);
+    W = cv.width = innerWidth * DPR; H = cv.height = innerHeight * DPR;
+    cv.style.width = innerWidth + "px"; cv.style.height = innerHeight + "px";
+    const n = Math.round(innerWidth * innerHeight / 16000);
+    pts = Array.from({ length: Math.min(n, 140) }, () => ({
+      x: Math.random() * W, y: Math.random() * H,
+      vx: (Math.random() - .5) * .18 * DPR, vy: (Math.random() - .5) * .18 * DPR,
+    }));
+  }
+  addEventListener("resize", resize); resize();
+  let t = 0, running = true;
+  document.addEventListener("visibilitychange",
+    () => { running = !document.hidden; if (running) requestAnimationFrame(frame); });
+  function frame() {
+    if (!running) return;
+    t += 1;
+    cx.clearRect(0, 0, W, H);
+    /* perspective grid, lower third */
+    const horizon = H * .62, vpx = W * .5;
+    cx.strokeStyle = "rgba(83,217,255,.06)"; cx.lineWidth = 1;
+    for (let i = -10; i <= 10; i++) {
+      cx.beginPath(); cx.moveTo(vpx, horizon);
+      cx.lineTo(vpx + i * W * .14, H + 40); cx.stroke();
+    }
+    const scroll = (t * .35 * DPR) % (H * .06);
+    for (let j = 0; j < 9; j++) {
+      const yy = horizon + Math.pow((j + scroll / (H * .06)) / 9, 2.1) * (H - horizon);
+      cx.beginPath(); cx.moveTo(0, yy); cx.lineTo(W, yy); cx.stroke();
+    }
+    /* particle constellation */
+    for (const p of pts) {
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0) p.x += W; if (p.x > W) p.x -= W;
+      if (p.y < 0) p.y += H; if (p.y > H) p.y -= H;
+    }
+    cx.fillStyle = "rgba(83,217,255,.5)";
+    for (const p of pts) { cx.fillRect(p.x, p.y, 1.6 * DPR, 1.6 * DPR); }
+    const reach = 110 * DPR;
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        const a = pts[i], b = pts[j], dx = a.x - b.x, dy = a.y - b.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < reach * reach) {
+          cx.strokeStyle = "rgba(83,217,255," + (.09 * (1 - d2 / (reach * reach))).toFixed(3) + ")";
+          cx.beginPath(); cx.moveTo(a.x, a.y); cx.lineTo(b.x, b.y); cx.stroke();
+        }
+      }
+    }
+    if (!reducedMotion) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+
+/* ================================================================== clock */
+setInterval(() => {
+  $("clock").textContent = new Date().toISOString().slice(11, 19) + "Z";
+}, 1000);
+
+/* ============================================================== rendering */
+function shortManual(m) {
+  return m.replace(/^TM-9-2320-366-/, "TM ").replace(/^TM-9-2320-392-/, "TM392 ")
+          .replace(/^TM-/, "TM ");
+}
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function renderRich(text) {
+  let h = esc(text);
+  h = h.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+  h = h.replace(/\[\[([A-Za-z0-9._-]+)\|(\d+)\]\]/g, (_, m, p) =>
+    '<button type="button" class="chip" data-m="' + m + '" data-p="' + p +
+    '" title="tap: deploy to board · right-click: open page">▣ ' +
+    esc(shortManual(m)) + " p." + p + "</button>");
+  return h;
+}
+function addMsg(cls, who) {
+  const d = document.createElement("div");
+  d.className = "m " + cls;
+  d.innerHTML = '<div class="who">' + who + '</div><div class="body"></div>';
+  feed.appendChild(d);
+  scrollFeed();
+  return d;
+}
+function scrollFeed() {
+  feed.scrollTop = feed.scrollHeight;
+}
+function setVal(msgEl, problems) {
+  const v = document.createElement("div");
+  v.className = "val";
+  if (problems && problems.length) {
+    v.innerHTML = problems.map(p => '<span class="bad">⚠ ' + esc(p) + "</span>").join("");
+    lamp("lampVal", "warn");
+  } else {
+    v.innerHTML = '<span class="good">✓ citations verified · numbers grounded in cited pages</span>';
+    lamp("lampVal", "ok");
+  }
+  msgEl.appendChild(v); scrollFeed();
+}
+function lamp(id, state) {
+  const el = $(id);
+  el.classList.remove("ok", "warn", "err");
+  if (state) el.classList.add(state);
+}
+const PHASES = {
+  retrieving: "▮ retrieving manual pages",
+  reasoning: "▮ SARGE evaluating evidence",
+  error: "▮ transmission error",
+};
+function setStatus(phase) {
+  statusline.innerHTML = phase
+    ? '<span class="blink">' + (PHASES[phase] || phase) + "…</span>" : "";
+}
+/* citation chips — tap deploys, right-click opens the page image view */
+feed.addEventListener("click", e => {
+  const c = e.target.closest(".chip");
+  if (!c) return;
+  beep(740, .05);
+  cmd({ action: "show", manual: c.dataset.m, pdf_page: +c.dataset.p });
+  if (isMobile()) setMview("board");   /* "show me" — jump to the evidence */
+});
+feed.addEventListener("contextmenu", e => {
+  const c = e.target.closest(".chip");
+  if (!c) return;
+  e.preventDefault();
+  open("/page/" + c.dataset.m + "/" + c.dataset.p, "_blank");
+});
+
+/* ================================================================ pan/zoom
+   One engine for panels and the full-screen viewer:
+   - wheel zoom (trackpad pinch arrives as ctrl+wheel → stronger factor)
+   - drag pan, two-finger pinch (pointer events)
+   - double-click / double-tap toggles fit ↔ 2.6× at the point
+   - opts.onTap: clean tap (no drag/pinch) — panels use it to go forward
+   - opts.onSwipe(dir): horizontal fling while at fit scale — page turn */
+function attachPanZoom(view, img, opts) {
+  opts = opts || {};
+  let x = 0, y = 0, s = 1, fitS = 1, fitted = true;
+  const pointers = new Map();
+  let lastDist = 0, lastMid = null;
+  let downPt = null, moved = 0, gestureMax = 0, lastTap = 0;
+  function apply() {
+    img.style.transform = "translate(" + x + "px," + y + "px) scale(" + s + ")";
+  }
+  function fit() {
+    const vw = view.clientWidth, vh = view.clientHeight;
+    if (!img.naturalWidth || !vw || !vh) return;
+    fitS = Math.min(vw / img.naturalWidth, vh / img.naturalHeight);
+    s = fitS;
+    x = (vw - img.naturalWidth * s) / 2;
+    y = (vh - img.naturalHeight * s) / 2;
+    fitted = true; apply();
+  }
+  function zoomAt(mx, my, ns) {
+    ns = Math.min(10, Math.max(fitS * .5, ns));
+    x = mx - (mx - x) * (ns / s); y = my - (my - y) * (ns / s);
+    s = ns; fitted = false; apply();
+  }
+  function toggleZoom(clientX, clientY) {
+    const r = view.getBoundingClientRect();
+    if (s > fitS * 1.4) fit();
+    else zoomAt(clientX - r.left, clientY - r.top, fitS * 2.6);
+    beep(840, .04);
+  }
+  img.addEventListener("load", fit);
+  if (img.complete && img.naturalWidth) fit();
+  new ResizeObserver(() => { if (fitted && pointers.size === 0) fit(); }).observe(view);
+  view.addEventListener("wheel", e => {
+    e.preventDefault();
+    const r = view.getBoundingClientRect();
+    const k = Math.pow(e.ctrlKey ? 1.008 : 1.0016, -e.deltaY);
+    zoomAt(e.clientX - r.left, e.clientY - r.top, s * k);
+  }, { passive: false });
+  view.addEventListener("pointerdown", e => {
+    view.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    gestureMax = Math.max(gestureMax, pointers.size);
+    if (pointers.size === 1) {
+      downPt = { x: e.clientX, y: e.clientY, t: Date.now() };
+      moved = 0;
+    }
+    lastDist = 0; lastMid = null;
+  });
+  view.addEventListener("pointermove", e => {
+    if (!pointers.has(e.pointerId)) return;
+    const prev = pointers.get(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const ps = [...pointers.values()];
+    if (ps.length === 1) {
+      moved += Math.abs(e.clientX - prev.x) + Math.abs(e.clientY - prev.y);
+      x += e.clientX - prev.x; y += e.clientY - prev.y;
+      fitted = false; apply();
+    } else if (ps.length === 2) {
+      const d = Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y);
+      const mid = { x: (ps[0].x + ps[1].x) / 2, y: (ps[0].y + ps[1].y) / 2 };
+      const r = view.getBoundingClientRect();
+      if (lastDist) {
+        const k = d / lastDist;
+        const ns = Math.min(10, Math.max(fitS * .5, s * k));
+        const mx = mid.x - r.left, my = mid.y - r.top;
+        x = mx - (mx - x) * (ns / s); y = my - (my - y) * (ns / s);
+        s = ns;
+        if (lastMid) { x += mid.x - lastMid.x; y += mid.y - lastMid.y; }
+        fitted = false; apply();
+      }
+      lastDist = d; lastMid = mid;
+    }
+  });
+  function lift(e) {
+    pointers.delete(e.pointerId);
+    if (pointers.size) return;
+    const dx = downPt ? e.clientX - downPt.x : 0;
+    const dt = downPt ? Date.now() - downPt.t : 1e9;
+    if (gestureMax === 1 && moved < 8 && dt < 450) {
+      if (opts.onTap) {
+        opts.onTap(e);                     /* panels: tap → bring forward */
+      } else {
+        const now = Date.now();            /* viewer: double-tap/click zoom */
+        if (now - lastTap < 350) { toggleZoom(e.clientX, e.clientY); lastTap = 0; }
+        else lastTap = now;
+      }
+    } else if (gestureMax === 1 && opts.onSwipe && s <= fitS * 1.05 &&
+               Math.abs(dx) > 64 && moved - Math.abs(dx) < 48 && dt < 600) {
+      opts.onSwipe(dx < 0 ? 1 : -1);
+    }
+    gestureMax = 0; downPt = null; lastDist = 0; lastMid = null;
+  }
+  view.addEventListener("pointerup", lift);
+  view.addEventListener("pointercancel", e => {
+    pointers.delete(e.pointerId);
+    if (!pointers.size) { gestureMax = 0; downPt = null; lastDist = 0; lastMid = null; }
+  });
+  /* mouse double-click is covered by the pointerup double-tap path;
+     suppress the native event so it never selects/zooms the page */
+  view.addEventListener("dblclick", e => e.preventDefault());
+  return { fit };
+}
+
+/* ================================================================= panels */
+function buildPanel(p) {
+  const el = document.createElement("div");
+  el.className = "panel" + (reducedMotion ? "" : " deploying");
+  el.dataset.id = p.id; el.dataset.ts = p.ts;
+  const printed = p.printed_page ? "printed " + p.printed_page : "";
+  el.innerHTML =
+    '<div class="phead">' +
+      '<span class="pmanual">' + esc(shortManual(p.manual)) + "</span>" +
+      '<span class="ppage">' + printed + " · pdf " + p.pdf_page + "</span>" +
+      '<span class="sp"></span>' +
+      '<button class="pb pin" title="pin (survives CLEAR)">◇</button>' +
+      '<a class="pb" target="_blank" rel="noopener" title="open page view" href="/page/' +
+        p.manual + "/" + p.pdf_page + '">↗</a>' +
+      '<button class="pb exp" title="expand">⛶</button>' +
+      '<button class="pb cls" title="close">✕</button>' +
+    "</div>" +
+    '<div class="pview"><img alt="' + esc(p.manual) + " page" + '"></div>' +
+    '<div class="pfoot">' +
+      esc((p.paragraph ? "¶ " + p.paragraph + " " : "") + (p.title || "")) +
+    "</div>";
+  const img = el.querySelector("img");
+  img.src = "/image/" + p.manual + "/" + p.pdf_page + ".png";
+  img.onerror = () => {
+    const d = document.createElement("div");
+    d.className = "perr";
+    d.textContent = "⚠ page image unavailable — PDF not in corpus/raw";
+    el.querySelector(".pview").appendChild(d);
+  };
+  attachPanZoom(el.querySelector(".pview"), img,
+                { onTap: () => openExpand(p) });
+  el.querySelector(".pin").onclick = () =>
+    cmd({ action: el.classList.contains("pinned") ? "unpin" : "pin", id: p.id });
+  el.querySelector(".cls").onclick = () => cmd({ action: "close", id: p.id });
+  el.querySelector(".exp").onclick = () => openExpand(p);
+  el.addEventListener("animationend", e => {
+    if (e.animationName === "deploy") el.classList.remove("deploying");
+    if (e.animationName === "flashp") el.classList.remove("flash");
+  });
+  return el;
+}
+function renderState(st) {
+  const ids = new Set(st.panels.map(p => p.id));
+  deck.querySelectorAll(".panel").forEach(el => {
+    if (!ids.has(el.dataset.id)) {
+      if (reducedMotion) { el.remove(); return; }
+      el.classList.add("retract");
+      el.addEventListener("animationend", () => el.remove(), { once: true });
+      setTimeout(() => el.remove(), 600);
+    }
+  });
+  for (const p of st.panels) {
+    let el = deck.querySelector('.panel[data-id="' + p.id + '"]');
+    if (!el) {
+      el = buildPanel(p);
+      deck.appendChild(el);
+      beep(620, .07); setTimeout(() => beep(930, .05), 90);
+    } else if (el.dataset.ts !== String(p.ts)) {
+      el.dataset.ts = p.ts;
+      el.classList.remove("flash"); void el.offsetWidth;
+      el.classList.add("flash");
+      beep(930, .05);
+    }
+    el.classList.toggle("pinned", !!p.pinned);
+    el.querySelector(".pin").textContent = p.pinned ? "◆" : "◇";
+  }
+  const live = deck.querySelectorAll(".panel:not(.retract)").length;
+  deck.className = "n" + Math.min(live, 6);
+  empty.style.display = live ? "none" : "grid";
+  /* ticker: most recent deployments */
+  $("tickcites").innerHTML = st.panels.slice(-8).map(p =>
+    "<span>▣ " + esc(shortManual(p.manual)) + " p." + (p.printed_page || p.pdf_page) + "</span>"
+  ).join("");
+  /* mobile tab badge — pulse when evidence lands while you're in comms */
+  const bd = $("mtabBadge");
+  bd.hidden = !live;
+  bd.textContent = live;
+  if (live > prevLive && document.body.dataset.mview === "comms") {
+    bd.classList.remove("pulse"); void bd.offsetWidth; bd.classList.add("pulse");
+  }
+  prevLive = live;
+}
+let prevLive = 0;
+
+/* ================================================================= expand */
+let xCur = null;                           /* {manual, pdf_page, last} */
+async function loadExpand(manual, page) {
+  xCur = { manual: manual, pdf_page: page, last: null };
+  $("xtitle").textContent = shortManual(manual) + " · pdf " + page;
+  $("xopen").href = "/page/" + manual + "/" + page;
+  const oldView = $("xview");
+  const view = oldView.cloneNode(false);   /* drops accumulated listeners */
+  oldView.replaceWith(view); view.id = "xview";
+  const img = document.createElement("img");
+  img.id = "ximg"; img.alt = manual + " page " + page;
+  img.onerror = () => {
+    const d = document.createElement("div");
+    d.className = "perr";
+    d.textContent = "⚠ page image unavailable — PDF not in corpus/raw";
+    view.appendChild(d);
+  };
+  view.appendChild(img);
+  img.src = "/image/" + manual + "/" + page + ".png";
+  attachPanZoom(view, img, { onSwipe: d => xNav(d) });
+  try {
+    const m = await (await fetch("/api/pagemeta/" + manual + "/" + page)).json();
+    if (!xCur || xCur.manual !== manual || xCur.pdf_page !== page) return;
+    xCur.last = m.last;
+    $("xtitle").textContent = shortManual(manual) + " — printed " +
+      (m.printed_page || "?") + " · pdf " + page +
+      (m.title ? " · " + m.title : "");
+    $("xprev").disabled = page <= 0;
+    $("xnext").disabled = m.last != null && page >= m.last;
+  } catch (e) {}
+}
+function xNav(delta) {
+  if (!xCur || $("expand").hidden) return;
+  const t = xCur.pdf_page + delta;
+  if (t < 0 || (xCur.last != null && t > xCur.last)) { beep(320, .06); return; }
+  beep(700, .04);
+  loadExpand(xCur.manual, t);
+}
+function openExpand(p) {
+  $("expand").hidden = false;
+  loadExpand(p.manual, p.pdf_page);
+  beep(700, .06);
+}
+$("xprev").onclick = () => xNav(-1);
+$("xnext").onclick = () => xNav(1);
+$("xclose").onclick = () => { $("expand").hidden = true; };
+addEventListener("keydown", e => {
+  if (e.key === "Escape") $("expand").hidden = true;
+  if (!$("expand").hidden) {
+    if (e.key === "ArrowLeft") { e.preventDefault(); xNav(-1); }
+    if (e.key === "ArrowRight") { e.preventDefault(); xNav(1); }
+  }
+  if (e.key === "/" && document.activeElement !== cmdline) {
+    e.preventDefault(); cmdline.focus();
+  }
+});
+
+/* ================================================================ commands */
+function cmd(payload) {
+  return fetch("/api/board/" + chatId + "/cmd", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(Object.assign({ origin: ORIGIN }, payload)),
+  }).catch(() => {});
+}
+let clearArmed = 0;
+$("clearBtn").onclick = () => {
+  const now = Date.now();
+  if (now - clearArmed < 2500) {           /* second press → clear ALL */
+    cmd({ action: "clear", all: true });
+    $("clearBtn").classList.remove("armed");
+    $("clearBtn").textContent = "⊘ clear";
+    clearArmed = 0;
+  } else {
+    cmd({ action: "clear" });              /* first press → unpinned only */
+    clearArmed = now;
+    $("clearBtn").classList.add("armed");
+    $("clearBtn").textContent = "⊘ all?";
+    setTimeout(() => {
+      $("clearBtn").classList.remove("armed");
+      $("clearBtn").textContent = "⊘ clear";
+    }, 2500);
+  }
+  beep(440, .08);
+};
+$("newBtn").onclick = () => newSession();
+
+/* ==================================================================== SSE */
+let es = null, remoteAI = null, remoteBuf = "";
+function connectSSE() {
+  if (es) es.close();
+  es = new EventSource("/api/board/" + chatId + "/events");
+  es.onopen = () => lamp("lampLink", "ok");
+  es.onerror = () => lamp("lampLink", "err");
+  es.onmessage = ev => {
+    let d; try { d = JSON.parse(ev.data); } catch (e) { return; }
+    if (d.type === "state") { renderState(d.state); return; }
+    if (d.origin === ORIGIN) return;       /* our own chat echoes — skip */
+    if (d.type === "chat_user") {
+      remoteAI = null; remoteBuf = "";
+      addMsg("user", "owner · remote").querySelector(".body").textContent = d.text;
+    } else if (d.type === "chat_chunk") {
+      if (!remoteAI) { remoteAI = addMsg("sarge", "SARGE"); remoteBuf = ""; }
+      remoteBuf += d.text;
+      remoteAI.querySelector(".body").innerHTML = renderRich(remoteBuf);
+      scrollFeed();
+    } else if (d.type === "chat_done") {
+      if (remoteAI) setVal(remoteAI, d.problems);
+      remoteAI = null; setStatus(null);
+    } else if (d.type === "status") {
+      setStatus(d.phase === "error" ? null : d.phase);
+    }
+  };
+}
+
+/* ============================================================== sessions */
+function greeting() {
+  const g = addMsg("sarge", "SARGE");
+  g.querySelector(".body").innerHTML = renderRich(
+    "SARGE ONLINE. " + fmtN(STATS.manuals) + " manuals, " + fmtN(STATS.pages) +
+    " page images locked and loaded, soldier.\n\nState your malfunction — and bring " +
+    "me MEASUREMENTS, not adjectives. 'Kinda slow' is not a number. Every spec I " +
+    "quote goes up on this board as the printed page, because the page image is " +
+    "the authority — I just point at it.\n\nWHAT'S BROKE?");
+}
+async function loadSession() {
+  feed.innerHTML = ""; remoteAI = null; remoteBuf = "";
+  let msgs = [];
+  try { msgs = await (await fetch("/api/chats/" + chatId + "/history")).json(); } catch (e) {}
+  for (const m of msgs) {
+    const el = addMsg(m.role === "user" ? "user" : "sarge",
+                      m.role === "user" ? "owner" : "SARGE");
+    el.querySelector(".body").innerHTML = renderRich(m.content);
+  }
+  if (!msgs.length) greeting();
+  scrollFeed();
+  try {
+    const st = await (await fetch("/api/board/" + chatId + "/state")).json();
+    renderState(st.state);
+  } catch (e) {}
+}
+async function switchSession(id) {
+  chatId = id;
+  localStorage.setItem("boardChat", id);
+  history.replaceState(null, "", "/?chat=" + id);
+  $("sessTag").textContent = "SESS " + id.slice(0, 8).toUpperCase();
+  await loadSession();
+  if (!params.get("shot")) connectSSE();
+}
+function newSession() { beep(880, .05); switchSession(uuid()); }
+async function loadSessions() {
+  let list = [];
+  try { list = await (await fetch("/api/chats")).json(); } catch (e) {}
+  const sl = $("sesslist");
+  sl.innerHTML = "";
+  for (const ch of list) {
+    const d = document.createElement("div");
+    d.className = "sess" + (ch.id === chatId ? " cur" : "");
+    const t = document.createElement("div");
+    t.className = "st"; t.textContent = ch.title || "(untitled)";
+    const dd = document.createElement("div");
+    dd.className = "sd";
+    dd.textContent = ch.date + " · " + ch.turns + " turn" + (ch.turns == 1 ? "" : "s");
+    d.append(t, dd);
+    d.onclick = () => {
+      $("sessions").hidden = true;
+      if (ch.id !== chatId) switchSession(ch.id);
+    };
+    sl.appendChild(d);
+  }
+  if (!list.length) sl.innerHTML =
+    '<div class="sd" style="padding:.6rem">no sessions on file yet</div>';
+}
+$("sessBtn").onclick = () => { $("sessions").hidden = false; loadSessions(); };
+$("sessClose").onclick = () => { $("sessions").hidden = true; };
+$("sessNew").onclick = () => { $("sessions").hidden = true; newSession(); };
+
+/* ===================================================== divider / collapse */
+(function divider() {
+  const frame = $("frame"), div = $("divider");
+  const saved = parseInt(localStorage.getItem("boardCommsW") || "", 10);
+  if (saved) frame.style.setProperty("--commsw",
+    Math.max(280, Math.min(saved, innerWidth * .7)) + "px");
+  if (localStorage.getItem("boardCollapsed") === "1")
+    frame.classList.add("collapsed");
+  let drag = null;
+  div.addEventListener("pointerdown", e => {
+    if (frame.classList.contains("collapsed")) return;
+    div.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, w: $("comms").getBoundingClientRect().width };
+  });
+  div.addEventListener("pointermove", e => {
+    if (!drag) return;
+    const w = Math.max(280, Math.min(drag.w + e.clientX - drag.x,
+                                     innerWidth * .7));
+    frame.style.setProperty("--commsw", w + "px");
+  });
+  div.addEventListener("pointerup", () => {
+    if (!drag) return;
+    localStorage.setItem("boardCommsW",
+      String(Math.round($("comms").getBoundingClientRect().width)));
+    drag = null;
+  });
+  div.addEventListener("click", () => {
+    if (!frame.classList.contains("collapsed")) return;
+    frame.classList.remove("collapsed");
+    localStorage.setItem("boardCollapsed", "0");
+    beep(880, .05);
+  });
+  div.addEventListener("dblclick", () => {
+    frame.style.setProperty("--commsw", "380px");
+    localStorage.setItem("boardCommsW", "380");
+  });
+  $("collapseBtn").onclick = () => {
+    frame.classList.add("collapsed");
+    localStorage.setItem("boardCollapsed", "1");
+    beep(520, .05);
+  };
+})();
+
+/* ======================================================== mobile views */
+function isMobile() { return matchMedia("(max-width: 880px)").matches; }
+function setMview(v) {
+  document.body.dataset.mview = v;
+  $("mtabComms").classList.toggle("active", v === "comms");
+  $("mtabBoard").classList.toggle("active", v === "board");
+}
+setMview(params.get("view") === "board" ? "board" : "comms");
+$("mtabComms").onclick = () => { setMview("comms"); beep(660, .04); };
+$("mtabBoard").onclick = () => { setMview("board"); beep(660, .04); };
+$("mtabMore").onclick = () => { $("msheet").classList.add("open"); beep(660, .04); };
+$("msheetBack").onclick = () => $("msheet").classList.remove("open");
+$("msSessions").onclick = () => {
+  $("msheet").classList.remove("open");
+  setMview("comms");
+  $("sessions").hidden = false;
+  loadSessions();
+};
+$("msNew").onclick = () => {
+  $("msheet").classList.remove("open");
+  setMview("comms");
+  newSession();
+};
+$("msClear").onclick = () => {
+  $("clearBtn").click();                 /* shares the arm/confirm logic */
+  $("msClear").textContent = $("clearBtn").textContent === "⊘ all?"
+    ? "⊘ tap again — clear ALL (pins too)" : "⊘ clear board";
+  setTimeout(() => { $("msClear").textContent = "⊘ clear board"; }, 2600);
+};
+function syncMuteLabel() {
+  $("msMute").textContent = muted ? "♪ sound: off" : "♪ sound: on";
+}
+$("msMute").onclick = () => { $("muteBtn").click(); syncMuteLabel(); };
+syncMuteLabel();
+
+/* ====================================================== mission config */
+const backendSel = $("backendSel"), scopeSel = $("scopeSel"),
+      intakeSel = $("intakeSel"), forumsChk = $("forumsChk");
+backendSel.value = localStorage.getItem("backend") || "claude";
+backendSel.onchange = () => localStorage.setItem("backend", backendSel.value);
+scopeSel.value = localStorage.getItem("boardScope") || "both";
+scopeSel.onchange = () => localStorage.setItem("boardScope", scopeSel.value);
+$("cfgBtn").onclick = () => {
+  $("cfgpanel").hidden = !$("cfgpanel").hidden;
+  beep(660, .04);
+};
+let photos = [];
+function updateAttachNote() {
+  const bits = [];
+  if (intakeSel.value) bits.push("📋 " + intakeSel.value);
+  if (photos.length) bits.push("📷 ×" + photos.length);
+  $("attachNote").textContent = bits.length ? "next msg: " + bits.join(" · ") : "";
+}
+intakeSel.onchange = updateAttachNote;
+function downscale(file) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      res(c.toDataURL("image/jpeg", .85));
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+$("photoBtn").onclick = () => $("photoInput").click();
+$("photoInput").addEventListener("change", async () => {
+  for (const f of $("photoInput").files) {
+    if (photos.length >= 4) break;
+    photos.push(await downscale(f));
+  }
+  $("photoInput").value = "";
+  updateAttachNote();
+  beep(700, .05);
+});
+async function loadIntakes() {
+  try {
+    const list = await (await fetch("/api/intakes")).json();
+    for (const it of list) {
+      const o = document.createElement("option");
+      o.value = it.file;
+      o.textContent = it.date + " — " + it.category + ": " + it.symptom;
+      intakeSel.appendChild(o);
+    }
+  } catch (e) {}
+}
+$("helpBtn").onclick = async () => {
+  if (busy) return;
+  busy = true;
+  const ai = addMsg("sarge", "SARGE · help post");
+  const body = ai.querySelector(".body");
+  body.innerHTML = '<span style="color:var(--ink-dim)">▮ drafting help post…</span>';
+  try {
+    const r = await fetch("/api/helppost", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, intake: intakeSel.value }),
+    });
+    const text = await r.text();
+    if (!r.ok) { body.textContent = "ERROR: " + text; return; }
+    body.innerHTML = "<b>DRAFT HELP POST — review before posting:</b>" +
+      '<textarea style="width:100%;height:14rem;margin-top:.5rem;' +
+      'background:rgba(4,10,16,.9);color:var(--ink);border:1px solid ' +
+      'var(--cyan-dim);border-radius:3px;font:11px/1.5 var(--mono);' +
+      'padding:.5rem">' + esc(text) + "</textarea>" +
+      '<button type="button" class="hbtn" style="margin-top:.3rem" ' +
+      'onclick="navigator.clipboard&&navigator.clipboard.writeText(' +
+      "this.previousElementSibling.value);this.textContent='copied ✓'\">copy</button>";
+    scrollFeed();
+  } catch (e) {
+    body.textContent = "ERROR: " + e;
+  } finally { busy = false; }
+};
+
+/* ================================================================== voice
+   Phase 2 (VOICE_WHITEBOARD_DESIGN.md): the $0 browser stack.
+   Ears  = Web Speech API, push-to-talk (hold the mic).
+   Mouth = speechSynthesis, sentence-streamed while the reply arrives.
+   Specs are never spoken — SARGE deploys the page and the human reads
+   the number off the board; citations are stripped before speech. */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const micOk = !!SR && window.isSecureContext;
+const micBtn = $("micBtn"), fabMic = $("fabMic");
+const ttsMode = $("ttsMode"), ttsVoice = $("ttsVoice"), ttsRate = $("ttsRate");
+const hasTTS = "speechSynthesis" in window;
+ttsMode.value = localStorage.getItem("ttsMode") || "auto";
+ttsMode.onchange = () => localStorage.setItem("ttsMode", ttsMode.value);
+ttsRate.value = localStorage.getItem("ttsRate") || "1";
+ttsRate.onchange = () => localStorage.setItem("ttsRate", ttsRate.value);
+ttsVoice.onchange = () => localStorage.setItem("ttsVoice", ttsVoice.value);
+function loadVoices() {
+  const cur = localStorage.getItem("ttsVoice") || "";
+  ttsVoice.innerHTML = '<option value="">system default voice</option>';
+  speechSynthesis.getVoices()
+    .filter(v => v.lang && v.lang.toLowerCase().startsWith("en"))
+    .forEach(v => {
+      const o = document.createElement("option");
+      o.value = v.voiceURI;
+      o.textContent = v.name.replace(/^(Microsoft|Google) /, "") + " · " + v.lang;
+      if (v.voiceURI === cur) o.selected = true;
+      ttsVoice.appendChild(o);
+    });
+}
+if (hasTTS) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+
+function speakText(t) {
+  if (!hasTTS || !t) return;
+  const u = new SpeechSynthesisUtterance(t);
+  const v = speechSynthesis.getVoices()
+    .find(x => x.voiceURI === (localStorage.getItem("ttsVoice") || ""));
+  if (v) u.voice = v;
+  u.rate = parseFloat(ttsRate.value || "1");
+  speechSynthesis.speak(u);
+}
+$("ttsTest").onclick = () => {
+  speechSynthesis.cancel();
+  speakText("SARGE online. Specs go on the board, soldier — I just point at them. WHAT'S BROKE?");
+};
+
+function stripForSpeech(t) {
+  return t
+    .replace(/\[\[SHOW:[^\]]*\]\]|\[\[CLEAR\]\]/g, " ")
+    .replace(/\[\[([A-Za-z0-9._-]+)\|(\d+)\]\]/g, " ")
+    .replace(/\*\*/g, "")
+    .replace(/\[A\]/g, ", confidence ALPHA,")
+    .replace(/\[B\]/g, ", confidence BRAVO,")
+    .replace(/\[C\]/g, ", confidence CHARLIE,")
+    .replace(/\[D\]/g, ", confidence DELTA,")
+    .replace(/[▮▣◆◇⛶«»☰¶⚠]/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .replace(/,\s*([,.!?])/g, "$1")
+    .replace(/\s{2,}/g, " ");
+}
+/* sentence-buffered streaming: speak as sentences complete, not at end */
+let ttsStream = null;
+function ttsStreamStart() { speechSynthesis.cancel(); ttsStream = { buf: "" }; }
+function ttsStreamFeed(text) {
+  if (!ttsStream) return;
+  ttsStream.buf += text;
+  let i;
+  while ((i = ttsStream.buf.search(/[.!?:]\s|\n/)) !== -1) {
+    const sentence = ttsStream.buf.slice(0, i + 1);
+    ttsStream.buf = ttsStream.buf.slice(i + 1);
+    speakText(stripForSpeech(sentence).trim());
+  }
+}
+function ttsStreamEnd(problems) {
+  if (!ttsStream) return;
+  speakText(stripForSpeech(ttsStream.buf).trim());
+  if (problems && problems.length)
+    speakText("Validation flagged " + problems.length +
+              (problems.length > 1 ? " items" : " item") +
+              " — eyes on the screen before trusting any number.");
+  ttsStream = null;
+}
+
+/* push-to-talk engine (shared by composer mic + board-view floating mic) */
+let rec = null, recActive = false, recFinal = "", recBtn = null;
+const recToast = $("recToast");
+function recUI(on) {
+  (recBtn || micBtn).classList.toggle("rec", on);
+  recToast.classList.toggle("on", on);
+  if (!on) recToast.textContent = "";
+  cmdline.placeholder = on ? "listening… release to send"
+                           : "report malfunction + measurements, soldier…";
+}
+function stopRec() {
+  recActive = false;
+  try { if (rec) rec.abort(); } catch (e) {}
+  recUI(false); cmdline.value = "";
+}
+function finishRec() {
+  recActive = false;
+  recUI(false);
+  const text = cmdline.value.trim();
+  cmdline.value = "";
+  if (text) { beep(660, .05); send(text, { spoken: true }); }
+  else beep(320, .08);
+}
+function startRec(btn) {
+  if (!micOk || busy || recActive) return;
+  speechSynthesis.cancel();               /* barge-in */
+  recBtn = btn; recFinal = "";
+  rec = new SR();
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.lang = navigator.language || "en-US";
+  rec.onresult = ev => {
+    let interim = "";
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (r.isFinal) recFinal += r[0].transcript;
+      else interim += r[0].transcript;
+    }
+    const t = (recFinal + " " + interim).replace(/\s+/g, " ").trim();
+    cmdline.value = t;
+    recToast.textContent = t || "…";
+  };
+  rec.onerror = () => stopRec();
+  rec.onend = () => { if (recActive) finishRec(); };
+  try {
+    rec.start();
+    recActive = true;
+    recUI(true);
+    beep(980, .06);
+  } catch (e) { stopRec(); }
+}
+function attachPTT(btn) {
+  btn.addEventListener("pointerdown", e => { e.preventDefault(); startRec(btn); });
+  btn.addEventListener("pointerup", () => { if (recActive && rec) rec.stop(); });
+  btn.addEventListener("pointercancel", stopRec);
+  btn.addEventListener("contextmenu", e => e.preventDefault());
+}
+if (micOk) {
+  micBtn.disabled = false; fabMic.hidden = false;
+  micBtn.title = fabMic.title = "hold to talk — release sends, Esc cancels";
+  attachPTT(micBtn); attachPTT(fabMic);
+} else {
+  micBtn.disabled = true; fabMic.hidden = true;
+  micBtn.title = !window.isSecureContext
+    ? "VOICE needs HTTPS or localhost — over Tailscale, enable its HTTPS certs (see VOICE_WHITEBOARD_DESIGN.md)"
+    : "no speech recognition in this browser — Chrome/Edge/Android have it free, or just type";
+}
+addEventListener("keydown", e => { if (e.key === "Escape" && recActive) stopRec(); });
+
+/* =================================================================== chat */
+let busy = false;
+async function send(text, opts) {
+  if (busy || !text.trim()) return;
+  opts = opts || {};
+  const spoken = !!opts.spoken;
+  const wantTTS = hasTTS && (ttsMode.value === "always" ||
+                             (ttsMode.value === "auto" && spoken));
+  busy = true; cmdline.value = ""; cmdline.disabled = sendBtn.disabled = true;
+  const intake = intakeSel.value;
+  const sendPhotos = photos; photos = [];
+  intakeSel.value = ""; updateAttachNote();
+  if (intake)
+    addMsg("user", "owner").querySelector(".body").textContent =
+      "📋 attached intake: " + intake;
+  if (sendPhotos.length) {
+    const pb = addMsg("user", "owner");
+    pb.querySelector(".body").innerHTML = sendPhotos.map(d =>
+      '<img src="' + d + '" style="max-width:8rem;border-radius:3px;' +
+      'margin:.15rem" alt="attached photo">').join("");
+  }
+  addMsg("user", spoken ? "owner · voice" : "owner")
+    .querySelector(".body").textContent = text;
+  beep(520, .05);
+  const ai = addMsg("sarge", "SARGE");
+  const body = ai.querySelector(".body");
+  body.innerHTML = '<span style="color:var(--ink-dim)">▮ transmitting…</span>';
+  setStatus("retrieving");
+  let raw = "", fed = 0, problems = null, valDone = false;
+  if (wantTTS) ttsStreamStart();
+  try {
+    const r = await fetch("/api/chat", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId, message: text, board: true, origin: ORIGIN,
+        voice: spoken,
+        backend: backendSel.value, scope: scopeSel.value,
+        forums: forumsChk.checked, intake: intake, photos: sendPhotos,
+      }),
+    });
+    if (!r.ok) {
+      body.textContent = "ERROR: " + (await r.text());
+      lamp("lampVal", "err");
+    } else {
+      const reader = r.body.getReader(), dec = new TextDecoder();
+      setStatus("reasoning");
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        raw += dec.decode(value, { stream: true });
+        const parts = raw.split("␞");
+        body.innerHTML = renderRich(parts[0]);
+        if (wantTTS && parts[0].length > fed) {
+          ttsStreamFeed(parts[0].slice(fed));
+          fed = parts[0].length;
+        }
+        if (!valDone && parts.length > 1 && parts[1].trim()) {
+          try {
+            problems = JSON.parse(parts[1]).problems;
+            setVal(ai, problems);
+            valDone = true;
+          } catch (e) {}
+        }
+        scrollFeed();
+      }
+      beep(880, .05); setTimeout(() => beep(1170, .07), 100);
+    }
+  } catch (e) {
+    body.textContent = "CONNECTION ERROR: " + e;
+    lamp("lampVal", "err");
+  } finally {
+    if (wantTTS) ttsStreamEnd(problems);
+    busy = false; cmdline.disabled = sendBtn.disabled = false;
+    setStatus(null);
+    if (!isMobile()) cmdline.focus();
+  }
+}
+$("composer").addEventListener("submit", e => { e.preventDefault(); send(cmdline.value); });
+
+/* ============================================================ boot + init */
+let STATS = { manuals: 0, pages: 0, content: 0, backend: "", model: "" };
+function fmtN(n) { return n.toLocaleString("en-US"); }
+
+async function boot() {
+  try { STATS = await (await fetch("/api/board/stats")).json(); } catch (e) {}
+  $("stats").innerHTML = "corpus <b>" + fmtN(STATS.manuals) + "</b> manuals · <b>" +
+    fmtN(STATS.pages) + "</b> page images · brain <b>" +
+    esc(STATS.model || "?") + "</b>";
+
+  /* Boot ceremony runs at most once per day per browser — on an
+     ordinary refresh you go straight to the board. */
+  const lastBoot = parseInt(localStorage.getItem("boardBootTs") || "0", 10);
+  if (Date.now() - lastBoot < 86400000) {
+    const b = $("boot");
+    if (b) b.remove();
+  } else {
+    const lines = [
+      "SARGE TACTICAL EVIDENCE BOARD v0.2",
+      "PAGE-IMAGE AUTHORITY LAYER ........ ONLINE",
+      "CORPUS: " + fmtN(STATS.manuals) + " MANUALS · " + fmtN(STATS.pages) + " PAGE IMAGES INDEXED",
+      "AS-BUILT DOSSIER .................. LOADED",
+      "SESSION LINK " + chatId.slice(0, 8).toUpperCase() + " ............ ESTABLISHED",
+      "GOVERNING RULE: THE PAGE IMAGE IS THE AUTHORITY. AI IS ADVISORY.",
+    ];
+    const bl = $("bootlines");
+    for (const ln of lines) {
+      const d = document.createElement("div");
+      d.className = "ln"; bl.appendChild(d);
+      const cur = document.createElement("span");
+      cur.className = "cursor"; cur.textContent = "▮"; d.appendChild(cur);
+      for (let i = 0; i < ln.length; i++) {
+        if (bootSkip || reducedMotion) { d.textContent = ln; break; }
+        cur.before(document.createTextNode(ln[i]));
+        if (i % 3 === 0) await new Promise(r => setTimeout(r, 8));
+      }
+      if (d.contains(cur)) cur.remove();
+      if (!bootSkip) beep(1250, .015, "sine", .015);
+      if (!bootSkip && !reducedMotion) await new Promise(r => setTimeout(r, 90));
+    }
+    await new Promise(r => setTimeout(r, bootSkip ? 0 : 350));
+    $("boot").classList.add("done");
+    setTimeout(() => { const b = $("boot"); if (b) b.remove(); }, 600);
+    localStorage.setItem("boardBootTs", String(Date.now()));
+  }
+
+  await loadIntakes();
+  /* history + persisted board state, then live sync over SSE
+     (shot=1 = screenshot/test mode: render once, no long-lived stream) */
+  await loadSession();
+  if (!params.get("shot")) connectSSE();
+
+  /* intake handoff from the Intake page: ?intake=…  (+auto=1 → analyze) */
+  const wantIntake = params.get("intake");
+  if (wantIntake && /^intake-[\d-]+\.json$/.test(wantIntake)) {
+    intakeSel.value = wantIntake;
+    if (intakeSel.value === wantIntake) {      /* exists in the list */
+      if (params.get("auto") === "1") {
+        await switchSession(uuid());           /* fresh session per intake */
+        intakeSel.value = wantIntake;
+        updateAttachNote();
+        send("Analyze this intake: rank the likely causes and give me " +
+             "the first test to run.");
+      } else {
+        updateAttachNote();
+        $("cfgpanel").hidden = false;
+      }
+    }
+  }
+  /* debug/deep-link: ?xpage=MANUAL|PDFPAGE opens the full-screen viewer */
+  const xp = params.get("xpage");
+  if (xp && xp.includes("|")) {
+    const mp = xp.split("|");
+    $("expand").hidden = false;
+    loadExpand(mp[0], parseInt(mp[1], 10) || 0);
+  }
+  cmdline.focus();
+}
+boot().catch(err => {
+  window.__bootFault((err && err.message) ? err.message : String(err));
+});
+</script>
+</body>
+</html>

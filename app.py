@@ -12,8 +12,10 @@ Run:  python app.py   →  http://127.0.0.1:8383
 
 import html
 import json
+import queue
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -29,6 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 DB_PATH = REPO_ROOT / "corpus" / "index.sqlite"
 SESSIONS_DIR = REPO_ROOT / "sessions"
 AS_BUILT = REPO_ROOT / "AS_BUILT_CONFIGURATION.md"
+BOARD_HTML = REPO_ROOT / "templates" / "board.html"
 
 app = Flask(__name__)
 
@@ -40,133 +43,93 @@ BASE = """
 <title>{{ title }} — SARGE</title>
 <style>
 :root {
-  --bg: #f6f7f9; --panel: #ffffff; --ink: #1a1d21; --muted: #5f6b7a;
-  --line: #dde3ea; --accent: #b45f2a; --accent-ink: #fff;
-  --user-bubble: #2f5d8a; --warn-bg: #fdf3e4; --warn-line: #e2b06a;
-  --ok: #2e7d4f; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14171b; --panel: #1d2126; --ink: #e6e9ed; --muted: #98a3b0;
-    --line: #313842; --accent: #d07a3f; --user-bubble: #2b5379;
-    --warn-bg: #2a2416; --warn-line: #8a6a35; --ok: #58b384;
-  }
+  --bg: #04070c; --panel: rgba(8, 18, 28, .92); --ink: #cfe8f5;
+  --muted: #6f8fa3; --line: rgba(83, 217, 255, .22); --accent: #53d9ff;
+  --accent-ink: #04121c; --amber: #ffb454;
+  --user-bubble: #143550; --warn-bg: rgba(255, 180, 84, .07);
+  --warn-line: rgba(255, 180, 84, .4); --ok: #4eff9c;
+  --mono: "Cascadia Mono", Consolas, "SF Mono", ui-monospace, monospace;
 }
 * { box-sizing: border-box; }
+html { color-scheme: dark; }
 body { margin: 0; background: var(--bg); color: var(--ink);
-  font: 15px/1.55 system-ui, "Segoe UI", sans-serif; }
-header { position: sticky; top: 0; z-index: 5; background: var(--panel);
+  font: 13.5px/1.55 var(--mono); }
+body::before { content: ""; position: fixed; inset: 0; z-index: 0;
+  pointer-events: none; background:
+    repeating-linear-gradient(0deg, rgba(0,0,0,.14) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at 50% 40%, transparent 60%, rgba(0,0,0,.5) 100%); }
+header { position: sticky; top: 0; z-index: 5;
+  background: linear-gradient(180deg, rgba(10,22,34,.97), rgba(6,12,20,.94));
   border-bottom: 1px solid var(--line); }
-.hwrap { max-width: 62rem; margin: 0 auto; padding: .55rem 1rem;
+.hwrap { max-width: 64rem; margin: 0 auto; padding: .55rem 1rem;
   display: flex; align-items: center; gap: 1rem; flex-wrap: nowrap; }
-.brand { font-weight: 700; letter-spacing: .02em; text-decoration: none;
-  color: var(--ink); white-space: nowrap; flex: none; }
-.brand span { color: var(--accent); }
+.brand { font-weight: 700; letter-spacing: .2em; text-decoration: none;
+  color: var(--accent); white-space: nowrap; flex: none;
+  text-transform: uppercase; }
+.brand span { color: var(--muted); font-weight: 400; letter-spacing: .12em; }
 nav { display: flex; overflow-x: auto; scrollbar-width: none; min-width: 0; }
-nav a { color: var(--muted); text-decoration: none; margin-right: 1rem;
-  padding: .3rem 0; border-bottom: 2px solid transparent; flex: none; }
-nav a.active { color: var(--ink); border-bottom-color: var(--accent); }
+nav a { color: var(--muted); text-decoration: none; margin-right: 1.1rem;
+  padding: .3rem 0; border-bottom: 2px solid transparent; flex: none;
+  text-transform: uppercase; font-size: 11px; letter-spacing: .16em; }
+nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
 nav a:hover { color: var(--ink); }
 @media (max-width: 560px) {
   .brand { font-size: .85rem; }
   .brand span { display: none; }
   nav a { font-size: .9rem; margin-right: .8rem; }
 }
-main { max-width: 62rem; margin: 0 auto; padding: 1.2rem 1rem 4rem; }
+main { max-width: 64rem; margin: 0 auto; padding: 1.2rem 1rem 4rem;
+  position: relative; z-index: 1; }
 a { color: var(--accent); }
 .card { background: var(--panel); border: 1px solid var(--line);
-  border-radius: 12px; padding: 1rem 1.2rem; margin: .9rem 0; }
+  border-radius: 4px; padding: 1rem 1.2rem; margin: .9rem 0; }
 .authority { background: var(--warn-bg); border: 1px solid var(--warn-line);
-  border-radius: 10px; padding: .6rem .9rem; font-size: .85rem;
-  color: var(--ink); margin: .8rem 0; }
-button, .btn { background: var(--accent); color: var(--accent-ink);
-  border: 0; border-radius: 8px; padding: .55rem 1.1rem; font-size: .95rem;
+  border-radius: 4px; padding: .6rem .9rem; font-size: .78rem;
+  color: var(--amber); margin: .8rem 0; letter-spacing: .05em; }
+button, .btn { background: rgba(83,217,255,.14); color: var(--accent);
+  border: 1px solid var(--line); border-radius: 3px; padding: .5rem 1.1rem;
+  font: 12px var(--mono); letter-spacing: .1em; text-transform: uppercase;
   cursor: pointer; }
-button:hover { filter: brightness(1.08); }
-input[type=text], textarea, select { width: 100%; background: var(--bg);
-  color: var(--ink); border: 1px solid var(--line); border-radius: 8px;
+button:hover, .btn:hover { background: rgba(83,217,255,.28); }
+input[type=text], textarea, select { width: 100%;
+  background: rgba(4,10,16,.9);
+  color: var(--ink); border: 1px solid var(--line); border-radius: 3px;
   padding: .55rem .7rem; font: inherit; }
+input[type=text]:focus, textarea:focus, select:focus { outline: none;
+  border-color: var(--accent); box-shadow: 0 0 12px rgba(83,217,255,.12); }
 label { display: block; margin: .8rem 0 .2rem; font-weight: 600;
-  font-size: .88rem; }
+  font-size: .78rem; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .1em; }
 .hit { border-left: 3px solid var(--accent); padding: .5rem .9rem;
-  margin: .7rem 0; background: var(--panel); border-radius: 0 10px 10px 0;
+  margin: .7rem 0; background: var(--panel); border-radius: 0 4px 4px 0;
   border-top: 1px solid var(--line); border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line); }
 .hit .loc { font-weight: 600; font-size: .92rem; }
-.hit .snip { color: var(--muted); font-size: .9rem; }
-mark { background: color-mix(in srgb, var(--accent) 30%, transparent);
-  color: inherit; border-radius: 3px; padding: 0 2px; }
-img.page { max-width: 100%; border: 1px solid var(--line); border-radius: 8px; }
-/* chat layout: left drawer + chat column */
-main.chat { max-width: 100rem; padding: 0 1rem; }
-#chatwrap { display: flex; gap: 1rem; height: calc(100vh - 3.6rem); }
-#drawer { flex: 0 0 17rem; display: flex; flex-direction: column;
-  gap: .5rem; padding: 1rem 0; overflow: hidden; }
-#convList { flex: 1 1 auto; overflow-y: auto; min-height: 5rem;
-  border-bottom: 1px solid var(--line); padding-bottom: .4rem; }
-#drawer .dhead { font-size: .78rem; font-weight: 700; color: var(--muted);
-  text-transform: uppercase; letter-spacing: .06em; margin-top: .6rem; }
-.conv { padding: .5rem .7rem; border-radius: 8px; cursor: pointer;
-  border: 1px solid transparent; }
-.conv:hover { background: var(--panel); border-color: var(--line); }
-.conv.active { background: var(--panel); border-color: var(--accent); }
-.conv .t { font-size: .88rem; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; }
-.conv .d { font-size: .75rem; color: var(--muted); }
+.hit .snip { color: var(--muted); font-size: .85rem; }
+mark { background: rgba(83,217,255,.3);
+  color: inherit; border-radius: 2px; padding: 0 2px; }
+img.page { max-width: 100%; border: 1px solid var(--line);
+  border-radius: 4px; background: #fff; }
 .btn-ghost { background: transparent; color: var(--accent);
   border: 1px solid var(--accent); }
-#chatcol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-#chatlog { flex: 1; overflow-y: auto; display: flex; flex-direction: column;
-  gap: .8rem; padding: 1rem .2rem; }
-.msg { max-width: 88%; padding: .7rem 1rem; border-radius: 14px;
-  white-space: pre-wrap; overflow-wrap: break-word; }
-.msg.user { align-self: flex-end; background: var(--user-bubble);
-  color: #fff; border-bottom-right-radius: 4px; }
-.msg.ai { align-self: flex-start; background: var(--panel);
-  border: 1px solid var(--line); border-bottom-left-radius: 4px; }
-.msg.ai .val { margin-top: .6rem; padding-top: .5rem;
-  border-top: 1px dashed var(--line); font-size: .82rem; color: var(--muted); }
-.msg.ai .val .bad { color: #c0392b; }
-.msg.ai .val .good { color: var(--ok); }
-#composer { border-top: 1px solid var(--line); background: var(--panel);
-  border-radius: 12px 12px 0 0; padding: .6rem .8rem; }
-#composer .row { display: flex; gap: .6rem; }
-#composer input[type=text] { flex: 1 1 0; width: auto; min-width: 0;
-  font-size: 1rem; }
-#composer .row button { flex: none; }
-#composer .tools { flex-wrap: wrap; }
-#chatwrap, #chatcol, #composer { max-width: 100%; min-width: 0; }
-#composer .tools { display: flex; gap: .5rem; align-items: center;
-  margin-bottom: .45rem; }
-#composer .tools select { width: auto; max-width: 22rem; font-size: .82rem;
-  padding: .3rem .5rem; }
-#menuBtn { display: none; padding: .25rem .6rem; flex: none; }
-@media (max-width: 820px) {
-  #menuBtn { display: inline-block; }
-  #drawer { position: fixed; left: 0; top: 0; bottom: 0; z-index: 20;
-    background: var(--bg); padding: 1rem; width: 17rem;
-    border-right: 1px solid var(--line); transform: translateX(-100%);
-    transition: transform .18s ease; }
-  #drawer.open { transform: none; box-shadow: 0 0 40px rgba(0,0,0,.4); }
-}
 .hint { color: var(--muted); font-size: .85rem; }
-.spin { display: inline-block; width: 1em; height: 1em; vertical-align: -2px;
-  border: 2px solid var(--muted); border-top-color: transparent;
-  border-radius: 50%; animation: r 0.8s linear infinite; }
-@keyframes r { to { transform: rotate(360deg); } }
-h2 { font-size: 1.15rem; }
+h2 { font-size: .95rem; text-transform: uppercase; letter-spacing: .18em;
+  color: var(--accent); }
+h3 { font-size: .85rem; text-transform: uppercase; letter-spacing: .14em; }
 table { border-collapse: collapse; }
 td, th { padding: .3rem .6rem; border-bottom: 1px solid var(--line); }
-fieldset.group { border: 1px solid var(--line); border-radius: 10px;
+th { color: var(--muted); text-transform: uppercase; font-size: .75rem;
+  letter-spacing: .1em; text-align: left; }
+fieldset.group { border: 1px solid var(--line); border-radius: 4px;
   margin: 1rem 0; padding: .4rem 1rem .9rem; }
-fieldset.group legend { font-weight: 700; font-size: .82rem; color: var(--muted);
-  text-transform: uppercase; letter-spacing: .06em; padding: 0 .4rem; }
+fieldset.group legend { font-weight: 700; font-size: .78rem;
+  color: var(--accent);
+  text-transform: uppercase; letter-spacing: .14em; padding: 0 .4rem; }
 </style></head><body>
 <header><div class="hwrap">
-  {% if active == 'chat' %}<button id="menuBtn" class="btn-ghost" title="Conversations">☰</button>{% endif %}
-  <a class="brand" href="/">SARGE&nbsp;<span>SERVICE&nbsp;BAY</span></a>
+  <a class="brand" href="/">★&nbsp;SARGE&nbsp;<span>SERVICE&nbsp;BAY</span></a>
   <nav>
-    <a href="/" class="{{ 'active' if active == 'chat' else '' }}">Diagnose</a>
+    <a href="/">Board</a>
     <a href="/search" class="{{ 'active' if active == 'search' else '' }}">Search</a>
     <a href="/intake" class="{{ 'active' if active == 'intake' else '' }}">Intake</a>
     <a href="/knowledge" class="{{ 'active' if active == 'knowledge' else '' }}">Knowledge</a>
@@ -175,258 +138,6 @@ fieldset.group legend { font-weight: 700; font-size: .82rem; color: var(--muted)
 </div></header>
 <main class="{{ mainclass }}">{{ body|safe }}</main>
 </body></html>
-"""
-
-CHAT_BODY = """
-<div id="chatwrap">
-<aside id="drawer">
-  <button id="newChat" style="width:100%">＋ New conversation</button>
-  <div class="dhead">Conversations</div>
-  <div id="convList"></div>
-  <div class="dhead">Scope</div>
-  <select id="scopeSel" title="Which side of the truck to search: chassis manuals, habitat/RV manuals, or both">
-    <option value="both">Chassis + habitat</option>
-    <option value="chassis">Chassis only</option>
-    <option value="habitat">Habitat (RV box) only</option>
-  </select>
-  <div class="dhead">Field reports</div>
-  <label style="font-weight:400;font-size:.85rem;display:flex;gap:.4rem;align-items:center">
-    <input type="checkbox" id="forumsChk" style="width:auto">
-    live-search Steel Soldiers (Tier 2, anecdotal)
-  </label>
-  <div class="dhead">Model</div>
-  <select id="backendSel" title="Claude needs connectivity; the local model works offline but is much weaker — validation flags matter more there">
-    <option value="claude">Claude (online, best)</option>
-    <option value="ollama">Local / offline (Ollama)</option>
-  </select>
-  <div class="dhead">Attach intake to next message</div>
-  <select id="intakeSel" title="Attach a filed intake to your next message">
-    <option value="">no intake attached</option>
-  </select>
-  <button id="helpPost" class="btn-ghost" style="width:100%"
-    title="Draft a structured post for a forum or group from this conversation">📢 Draft help post</button>
-</aside>
-<section id="chatcol">
-  <div id="chatlog"></div>
-  <div id="composer">
-    <div class="tools">
-      <span id="attachNote" class="hint" style="display:none"></span>
-      <span class="hint">page-image citations are the authority — verify [A] specs before wrenching</span>
-    </div>
-    <div class="row">
-      <button id="photoBtn" class="btn-ghost" title="Attach photos (gauge faces, leaks, parts)">📷</button>
-      <input type="file" id="photoInput" accept="image/*" multiple hidden>
-      <input id="box" type="text" placeholder="What's the issue? (e.g. slow air buildup, 8 minutes to 120 psi, no audible leaks)" autofocus>
-      <button id="send">Send</button>
-    </div>
-  </div>
-</section>
-</div>
-<script>
-const log = document.getElementById("chatlog");
-const box = document.getElementById("box");
-const send = document.getElementById("send");
-const drawer = document.getElementById("drawer");
-const convList = document.getElementById("convList");
-const intakeSel = document.getElementById("intakeSel");
-let chatId = sessionStorage.getItem("chatId") ||
-  (sessionStorage.setItem("chatId", crypto.randomUUID()), sessionStorage.getItem("chatId"));
-
-function cite(text) {
-  let esc = text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  esc = esc.replace(/\\*\\*([^*\\n]+)\\*\\*/g, "<b>$1</b>");
-  return esc.replace(/\\[\\[([A-Za-z0-9._-]+)\\|(\\d+)\\]\\]/g,
-    (_, m, p) => `<a href="/page/${m}/${p}" target="_blank">[${m.replace("TM-9-2320-366-","TM ")} p.${p}]</a>`);
-}
-function bubble(cls, html) {
-  const d = document.createElement("div");
-  d.className = "msg " + cls;
-  d.innerHTML = html;
-  log.appendChild(d);
-  d.scrollIntoView({behavior: "smooth", block: "end"});
-  return d;
-}
-
-function loadChatList() {
-  fetch("/api/chats").then(r => r.json()).then(list => {
-    convList.innerHTML = "";
-    for (const ch of list) {
-      const d = document.createElement("div");
-      d.className = "conv" + (ch.id === chatId ? " active" : "");
-      d.innerHTML = `<div class="t"></div><div class="d">${ch.date} · ${ch.turns} turn${ch.turns == 1 ? "" : "s"}</div>`;
-      d.querySelector(".t").textContent = ch.title || "(untitled)";
-      d.title = ch.title || "";
-      d.onclick = () => { openChat(ch.id); drawer.classList.remove("open"); };
-      convList.appendChild(d);
-    }
-  });
-}
-async function openChat(id) {
-  chatId = id;
-  sessionStorage.setItem("chatId", id);
-  log.innerHTML = "";
-  const msgs = await (await fetch(`/api/chats/${id}/history`)).json();
-  for (const m of msgs)
-    bubble(m.role === "user" ? "user" : "ai", cite(m.content));
-  if (log.lastChild) log.lastChild.scrollIntoView({block: "end"});
-  loadChatList();
-}
-document.getElementById("newChat").onclick = () => {
-  chatId = crypto.randomUUID();
-  sessionStorage.setItem("chatId", chatId);
-  log.innerHTML = "";
-  drawer.classList.remove("open");
-  loadChatList();
-  box.focus();
-};
-document.getElementById("menuBtn").onclick = () =>
-  drawer.classList.toggle("open");
-
-document.getElementById("helpPost").onclick = async () => {
-  drawer.classList.remove("open");
-  const ai = bubble("ai", '<span class="spin"></span> drafting help post…');
-  try {
-    const r = await fetch("/api/helppost", {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({chat_id: chatId, intake: intakeSel.value}),
-    });
-    if (!r.ok) { ai.innerHTML = "Error: " + (await r.text()); return; }
-    const text = await r.text();
-    ai.innerHTML = "<b>Draft help post — review before posting:</b>" +
-      '<textarea style="width:100%;height:16rem;margin-top:.5rem;font-family:var(--mono);font-size:.82rem">' +
-      text.replace(/&/g,"&amp;").replace(/</g,"&lt;") + "</textarea>" +
-      '<button onclick="navigator.clipboard.writeText(this.previousElementSibling.value);this.textContent=\\'copied ✓\\'">copy</button>';
-    ai.scrollIntoView({block: "end"});
-  } catch (e) { ai.innerHTML = "Error: " + e; }
-};
-
-const backendSel = document.getElementById("backendSel");
-backendSel.value = localStorage.getItem("backend") || "claude";
-backendSel.addEventListener("change", () =>
-  localStorage.setItem("backend", backendSel.value));
-
-const attachNote = document.getElementById("attachNote");
-const photoInput = document.getElementById("photoInput");
-let photos = [];
-document.getElementById("photoBtn").onclick = () => photoInput.click();
-photoInput.addEventListener("change", async () => {
-  for (const f of photoInput.files) {
-    if (photos.length >= 4) break;
-    photos.push(await downscale(f));
-  }
-  photoInput.value = "";
-  showAttach();
-});
-function downscale(file) {
-  return new Promise(res => {
-    const img = new Image();
-    img.onload = () => {
-      const s = Math.min(1, 1600 / Math.max(img.width, img.height));
-      const c = document.createElement("canvas");
-      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
-      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-      res(c.toDataURL("image/jpeg", 0.85));
-    };
-    img.src = URL.createObjectURL(file);
-  });
-}
-function showAttach() {
-  const bits = [];
-  if (intakeSel.value) bits.push("📋 intake " + intakeSel.value);
-  if (photos.length) bits.push("📷 " + photos.length + " photo(s)");
-  attachNote.style.display = bits.length ? "" : "none";
-  attachNote.textContent = bits.length ? "next message includes: " + bits.join(", ") : "";
-}
-intakeSel.addEventListener("change", showAttach);
-
-fetch("/api/intakes").then(r => r.json()).then(list => {
-  for (const it of list) {
-    const o = document.createElement("option");
-    o.value = it.file;
-    o.textContent = `${it.date} — ${it.category}: ${it.symptom}`;
-    intakeSel.appendChild(o);
-  }
-  const params = new URLSearchParams(location.search);
-  const shareChat = params.get("chat");
-  if (shareChat && /^[0-9a-f-]{36}$/.test(shareChat)) openChat(shareChat);
-  const want = params.get("intake");
-  if (want) { intakeSel.value = want; showAttach(); }
-  if (want && params.get("auto") === "1") {
-    history.replaceState(null, "", "/");   // don't re-fire on refresh
-    chatId = crypto.randomUUID();          // fresh conversation per intake
-    sessionStorage.setItem("chatId", chatId);
-    log.innerHTML = "";
-    intakeSel.value = want;
-    box.value = "Analyze this intake: rank the likely causes and give me " +
-                "the first test to run.";
-    ask();
-  }
-});
-
-async function ask() {
-  const q = box.value.trim();
-  if (!q) return;
-  box.value = ""; box.disabled = send.disabled = true;
-  const attach = intakeSel.value;
-  const sendPhotos = photos; photos = [];
-  if (attach) bubble("user", "📋 attached intake: " + attach);
-  if (sendPhotos.length) {
-    const pb = bubble("user", "");
-    pb.innerHTML = sendPhotos.map(d => `<img src="${d}" style="max-width:9rem;border-radius:8px;margin:.15rem">`).join("");
-  }
-  bubble("user", cite(q));
-  intakeSel.value = "";
-  showAttach();
-  const ai = bubble("ai", '<span class="spin"></span> retrieving manual pages…');
-  let raw = "";
-  try {
-    const r = await fetch("/api/chat", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({chat_id: chatId, message: q, intake: attach,
-                            backend: backendSel.value, photos: sendPhotos,
-                            forums: document.getElementById("forumsChk").checked,
-                            scope: document.getElementById("scopeSel").value}),
-    });
-    if (!r.ok) { ai.innerHTML = "Error: " + (await r.text()); return; }
-    const reader = r.body.getReader();
-    const dec = new TextDecoder();
-    while (true) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      raw += dec.decode(value, {stream: true});
-      const parts = raw.split("\\u241E");   // answer ␞ validation-json
-      ai.innerHTML = cite(parts[0]);
-      if (parts.length > 1 && parts[1].trim()) {
-        try {
-          const v = JSON.parse(parts[1]);
-          ai.innerHTML = cite(parts[0]) + '<div class="val">' + (
-            v.problems.length
-              ? v.problems.map(p => '<div class="bad">⚠ ' + p + "</div>").join("")
-              : '<div class="good">✓ citations verified against index; numbers grounded in cited pages</div>'
-          ) + "</div>";
-        } catch (e) {}
-      }
-      log.lastChild.scrollIntoView({block: "end"});
-    }
-  } catch (e) { ai.innerHTML = "Connection error: " + e; }
-  finally {
-    box.disabled = send.disabled = false; box.focus();
-    loadChatList();
-  }
-}
-send.onclick = ask;
-box.addEventListener("keydown", e => { if (e.key === "Enter") ask(); });
-
-loadChatList();
-// restore this tab's conversation on load (unless auto-analysis replaces it)
-if (!new URLSearchParams(location.search).get("auto"))
-  fetch(`/api/chats/${chatId}/history`).then(r => r.json()).then(msgs => {
-    if (log.children.length === 0)
-      for (const m of msgs)
-        bubble(m.role === "user" ? "user" : "ai", cite(m.content));
-  });
-</script>
 """
 
 
@@ -457,12 +168,236 @@ AUTHORITY_NOTE = (
     'on it. Extracted text and search snippets are advisory.</div>'
 )
 
+# ---------------------------------------------------------------- board hub
+#
+# The "tactical board" (VOICE_WHITEBOARD_DESIGN.md phase 1): a shared
+# multi-panel evidence display. Panel state lives here, per chat session;
+# any number of browser clients (wall tablet, phone, laptop) join over SSE
+# and render the same board. The model drives it with inline directives —
+# [[SHOW:MANUAL|PDFPAGE]] / [[CLEAR]] — which are executed server-side,
+# validated against the index, and stripped from the visible reply. Plain
+# text protocol so every backend (Claude, Ollama, any future adapter)
+# can use it. Page images render from the local corpus only.
+
+BOARDS: dict[str, dict] = {}      # chat_id -> {state, listeners, lock}
+BOARDS_LOCK = threading.Lock()
+BOARD_MAX_PANELS = 6
+
+BOARD_TAG_RE = re.compile(
+    r"\[\[SHOW:([A-Za-z0-9._-]+)\|(\d+)\]\]|\[\[CLEAR\]\]")
+
+
+def _board_file(chat_id: str) -> Path:
+    return SESSIONS_DIR / f"board-{chat_id}.json"
+
+
+def _board_save(chat_id: str, state: dict) -> None:
+    """Persist panel state next to the session logs so the evidence board
+    survives server restarts (call while holding the board lock)."""
+    try:
+        SESSIONS_DIR.mkdir(exist_ok=True)
+        _board_file(chat_id).write_text(json.dumps(state), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _board(chat_id: str) -> dict:
+    with BOARDS_LOCK:
+        b = BOARDS.get(chat_id)
+        if b is None:
+            state = {"seq": 0, "panels": []}
+            try:
+                saved = json.loads(
+                    _board_file(chat_id).read_text(encoding="utf-8"))
+                state["seq"] = int(saved.get("seq", 0))
+                state["panels"] = [p for p in saved.get("panels", [])
+                                   if isinstance(p, dict) and "manual" in p]
+            except Exception:
+                pass
+            b = {"state": state, "listeners": [], "lock": threading.Lock()}
+            BOARDS[chat_id] = b
+        return b
+
+
+def board_broadcast(chat_id: str, event: dict) -> None:
+    payload = json.dumps(event)
+    b = _board(chat_id)
+    for q_ in list(b["listeners"]):
+        try:
+            q_.put_nowait(payload)
+        except Exception:
+            try:
+                b["listeners"].remove(q_)
+            except ValueError:
+                pass
+
+
+def _board_state_event(b: dict) -> dict:
+    with b["lock"]:
+        snap = json.loads(json.dumps(b["state"]))
+    return {"type": "state", "state": snap}
+
+
+def board_show(chat_id: str, manual: str, pdf_page: int,
+               origin: str = "") -> str | None:
+    """Deploy a corpus page to the board. Returns an error string if the
+    target does not exist in the index (fabricated SHOW → validation flag)."""
+    con = db()
+    row = con.execute(
+        "SELECT printed_page, paragraph, paragraph_title FROM pages"
+        " WHERE manual = ? AND pdf_page = ?", (manual, pdf_page)).fetchone()
+    con.close()
+    if not row:
+        return (f"Board directive SHOW {manual} p.{pdf_page} refused: "
+                "page not in index.")
+    b = _board(chat_id)
+    with b["lock"]:
+        st = b["state"]
+        existing = next((p for p in st["panels"]
+                         if p["manual"] == manual
+                         and p["pdf_page"] == pdf_page), None)
+        if existing:
+            existing["ts"] = time.time()          # re-deploy → flash it
+        else:
+            while len(st["panels"]) >= BOARD_MAX_PANELS:
+                unpinned = [p for p in st["panels"] if not p.get("pinned")]
+                if not unpinned:
+                    return ("Board full and every panel is pinned — "
+                            f"could not deploy {manual} p.{pdf_page}.")
+                st["panels"].remove(min(unpinned, key=lambda p: p["ts"]))
+            st["panels"].append({
+                "id": uuid.uuid4().hex[:8], "manual": manual,
+                "pdf_page": pdf_page, "printed_page": row[0],
+                "paragraph": row[1], "title": row[2] or "",
+                "pinned": False, "ts": time.time()})
+        st["seq"] += 1
+        _board_save(chat_id, st)
+    board_broadcast(chat_id, {**_board_state_event(b), "origin": origin})
+    return None
+
+
+def board_clear(chat_id: str, origin: str = "",
+                everything: bool = False) -> None:
+    b = _board(chat_id)
+    with b["lock"]:
+        st = b["state"]
+        st["panels"] = ([] if everything
+                        else [p for p in st["panels"] if p.get("pinned")])
+        st["seq"] += 1
+        _board_save(chat_id, st)
+    board_broadcast(chat_id, {**_board_state_event(b), "origin": origin})
+
+
+def board_stream_filter(pieces, chat_id: str, origin: str, notes: list):
+    """Pass a token stream through, executing and stripping board
+    directives. Holds back a short tail so a tag split across chunks is
+    neither displayed nor missed."""
+    buf = ""
+    for piece in pieces:
+        buf += piece
+        while True:
+            m = BOARD_TAG_RE.search(buf)
+            if not m:
+                break
+            pre, buf = buf[:m.start()], buf[m.end():]
+            if pre:
+                yield pre
+            if m.group(1):                        # SHOW
+                err = board_show(chat_id, m.group(1), int(m.group(2)), origin)
+                if err:
+                    notes.append(err)
+            else:                                 # CLEAR
+                board_clear(chat_id, origin)
+        i = buf.rfind("[[")
+        if i != -1 and "]]" not in buf[i:] and len(buf) - i < 72:
+            out, buf = buf[:i], buf[i:]
+        else:
+            out, buf = buf, ""
+        if out:
+            yield out
+    if buf:
+        yield buf
+
+
+_CORPUS_STATS: dict | None = None
+
+
+def corpus_stats() -> dict:
+    global _CORPUS_STATS
+    if _CORPUS_STATS is None:
+        try:
+            con = db()
+            pages, content, manuals = con.execute(
+                "SELECT COUNT(*), COALESCE(SUM(kind='content'),0),"
+                " COUNT(DISTINCT manual) FROM pages").fetchone()
+            con.close()
+            _CORPUS_STATS = {"pages": pages or 0, "content": content or 0,
+                             "manuals": manuals or 0}
+        except Exception:
+            _CORPUS_STATS = {"pages": 0, "content": 0, "manuals": 0}
+    return _CORPUS_STATS
+
+
+def board_addendum() -> str:
+    s = corpus_stats()
+    return f"""
+
+TACTICAL BOARD MODE. This conversation is happening on the evidence board —
+a big shared display in the service bay. You have {s['manuals']} manuals /
+{s['pages']} page images under your command, and two board directives you
+write INLINE in your reply (they are executed and stripped before display):
+
+- [[SHOW:MANUAL|PDFPAGE]]  deploys that page image onto the board. Use it
+  immediately after a citation whenever eyes on the page help: figures,
+  schematics, spec tables, troubleshooting trees. Deploy the page BEFORE
+  discussing its numbers — the crew reads the image while you talk them
+  through it ("panel's up — governor spec table, top right"). 1–3 per
+  reply. Only SHOW pages present in your retrieved sources.
+- [[CLEAR]]  sweeps unpinned panels when the topic changes.
+
+VOICE AND BEARING — you are SARGE, a motor-pool chief with drill-sergeant
+delivery: terse, loud, absolutely allergic to guessing. Short punchy lines.
+Demand measurements, not adjectives ("'kinda slow' is not a number,
+soldier — time it"). Praise good data ("Outstanding. THAT's a reading.").
+Address the owner as "soldier" or "chief". All-caps for emphasis, sparingly.
+The attitude NEVER overrides discipline:
+- Every spec still cited [[MANUAL|PAGE]]; no citation, no number. The page
+  image on the board is the authority — you point at it, you don't replace it.
+- Safety steps are delivered DEAD SERIOUS, verbatim from the source, no
+  jokes, prefixed "SAFETY BRIEF:".
+- Confidence labels [A]-[D] stay mandatory. Never bluff. If the corpus
+  doesn't have it, say so straight and where to look instead."""
+
+VOICE_ADDENDUM = """
+
+VOICE MODE — the owner SPOKE this turn and your reply will be READ ALOUD
+(TTS) while the board renders your panels. Discipline for the ear:
+- SHORT. 2-6 punchy sentences. ONE question or ONE instruction per turn.
+- NEVER speak a numeric spec, torque, pressure, or part number. Deploy the
+  page with [[SHOW:...]] and order the owner to read the value back off
+  the board ("Panel 2, top table — read me the cutout number."). Written
+  [[MANUAL|PAGE]] citations remain mandatory in the text; they are
+  stripped before speech, so cite freely.
+- Echo the owner's reported measurements back to confirm you heard right
+  before you reason from them (ASR mishears numbers).
+- SAFETY BRIEFS are still delivered in full, verbatim, dead serious.
+- Spoken prose only: no headings, no bullet lists, no markdown, no tables."""
+
 # ---------------------------------------------------------------- chat
 
 
 @app.route("/")
 def home():
-    return page("Diagnose", CHAT_BODY, active="chat", mainclass="chat")
+    """The tactical board IS the default interface. Served raw (no Jinja):
+    a self-contained static page."""
+    return Response(BOARD_HTML.read_text(encoding="utf-8"),
+                    mimetype="text/html")
+
+
+@app.route("/classic")
+def classic():
+    """The pre-board chat UI is retired — everything lives on the board."""
+    return redirect("/")
 
 
 @app.route("/api/chats")
@@ -551,6 +486,15 @@ def api_chat():
                 "type": "base64", "media_type": m.group(1),
                 "data": m.group(2)}})
     use_forums = bool(data.get("forums"))
+    board_mode = bool(data.get("board"))
+    voice_mode = bool(data.get("voice"))
+    origin = (data.get("origin") or "")[:36]
+    if board_mode:
+        board_broadcast(chat_id, {"type": "chat_user",
+                                  "text": data.get("message", ""),
+                                  "origin": origin})
+        board_broadcast(chat_id, {"type": "status", "phase": "retrieving",
+                                  "origin": origin})
 
     SESSIONS_DIR.mkdir(exist_ok=True)
     hist_file = SESSIONS_DIR / f"chat-{chat_id}.json"
@@ -581,6 +525,8 @@ def api_chat():
            "\nIf the owner attached photos, read them carefully (gauges, "
            "labels, part markings, leak evidence) and treat what you see "
            "as measured evidence [B]."
+         + (board_addendum() if board_mode else "")
+         + (VOICE_ADDENDUM if voice_mode else "")
          + "\n\nAS-BUILT CONFIGURATION (canonical dossier):\n"
          + as_built_text(),
          "cache_control": {"type": "ephemeral"}},
@@ -594,40 +540,64 @@ def api_chat():
 
     def generate():
         answer = []
-        try:
+        board_notes: list[str] = []
+
+        def raw_stream():
             if backend == "ollama":
                 import backends
-                yield ("⚠ OFFLINE MODE (local model) — weaker reasoning; "
-                       "expect validation flags; treat everything as [C] "
-                       "at best.\n\n")
                 sys_text = "".join(b["text"] for b in system)
-                for piece in backends.ollama_stream(sys_text, messages):
-                    answer.append(piece)
-                    yield piece
-            else:
-                client = anthropic.Anthropic()
-                convo = list(messages)
-                for _ in range(4):   # pause_turn continuations (web search)
-                    with client.messages.stream(
-                        model=_model(),
-                        max_tokens=8000,
-                        thinking={"type": "adaptive"},
-                        system=system,
-                        tools=tools,
-                        messages=convo,
-                    ) as stream:
-                        for text in stream.text_stream:
-                            answer.append(text)
-                            yield text
-                        resp = stream.get_final_message()
-                    if resp.stop_reason != "pause_turn":
-                        break
-                    convo = convo + [{"role": "assistant", "content": resp.content}]
+                yield from backends.ollama_stream(sys_text, messages)
+                return
+            client = anthropic.Anthropic()
+            convo = list(messages)
+            for _ in range(4):   # pause_turn continuations (web search)
+                with client.messages.stream(
+                    model=_model(),
+                    max_tokens=8000,
+                    thinking={"type": "adaptive"},
+                    system=system,
+                    tools=tools,
+                    messages=convo,
+                ) as stream:
+                    yield from stream.text_stream
+                    resp = stream.get_final_message()
+                if resp.stop_reason != "pause_turn":
+                    return
+                convo = convo + [{"role": "assistant", "content": resp.content}]
+
+        stream_src = raw_stream()
+        if board_mode:
+            stream_src = board_stream_filter(stream_src, chat_id, origin,
+                                             board_notes)
+        try:
+            if backend == "ollama":
+                banner = ("⚠ OFFLINE MODE (local model) — weaker reasoning; "
+                          "expect validation flags; treat everything as [C] "
+                          "at best.\n\n")
+                if board_mode:
+                    board_broadcast(chat_id, {"type": "chat_chunk",
+                                              "text": banner,
+                                              "origin": origin})
+                yield banner
+            if board_mode:
+                board_broadcast(chat_id, {"type": "status",
+                                          "phase": "reasoning",
+                                          "origin": origin})
+            for piece in stream_src:
+                answer.append(piece)
+                if board_mode:
+                    board_broadcast(chat_id, {"type": "chat_chunk",
+                                              "text": piece,
+                                              "origin": origin})
+                yield piece
         except Exception as e:
+            if board_mode:
+                board_broadcast(chat_id, {"type": "status", "phase": "error",
+                                          "origin": origin})
             yield f"\n[error: {e}]"
             return
         full = "".join(answer)
-        problems = dx.validate(full, pages_used)
+        problems = board_notes + dx.validate(full, pages_used)
         # persist history (text only; photos noted, saved alongside)
         note = message
         if photo_blocks:
@@ -642,6 +612,10 @@ def api_chat():
         history.append({"role": "assistant", "content": full})
         hist_file.write_text(json.dumps(history, indent=1), encoding="utf-8")
         yield "␞" + json.dumps({"problems": problems})
+        if board_mode:
+            board_broadcast(chat_id, {"type": "chat_done",
+                                      "problems": problems,
+                                      "origin": origin})
 
     return Response(generate(), mimetype="text/plain")
 
@@ -702,6 +676,120 @@ def api_helppost():
         response = stream.get_final_message()
     text = "".join(b.text for b in response.content if b.type == "text")
     return Response(text, mimetype="text/plain")
+
+
+# ---------------------------------------------------------------- board routes
+
+@app.route("/board")
+def board_page():
+    """Legacy path from before the board became the default — redirect,
+    preserving the session/query args."""
+    q = request.query_string.decode()
+    return redirect("/" + ("?" + q if q else ""))
+
+
+@app.route("/api/board/stats")
+def api_board_stats():
+    from backends import get_config
+    cfg = get_config()
+    return json.dumps({
+        **corpus_stats(),
+        "backend": cfg["backend"],
+        "model": (cfg["claude_model"] if cfg["backend"] == "claude"
+                  else cfg["ollama_model"]),
+    }), 200, {"Content-Type": "application/json"}
+
+
+@app.route("/api/pagemeta/<manual>/<int:pdf_page>")
+def api_pagemeta(manual, pdf_page):
+    """Metadata for one corpus page + the manual's last pdf page —
+    powers the board's full-screen viewer page navigation."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", manual):
+        abort(400)
+    con = db()
+    row = con.execute(
+        "SELECT printed_page, paragraph, paragraph_title,"
+        " (SELECT MAX(pdf_page) FROM pages WHERE manual = ?)"
+        " FROM pages WHERE manual = ? AND pdf_page = ?",
+        (manual, manual, pdf_page)).fetchone()
+    con.close()
+    if not row:
+        abort(404)
+    return json.dumps({"printed_page": row[0], "paragraph": row[1],
+                       "title": row[2] or "", "last": row[3]}), 200, {
+        "Content-Type": "application/json"}
+
+
+@app.route("/api/board/<chat_id>/state")
+def api_board_state(chat_id):
+    if not re.fullmatch(r"[0-9a-f-]{36}", chat_id):
+        abort(400)
+    return json.dumps(_board_state_event(_board(chat_id))), 200, {
+        "Content-Type": "application/json"}
+
+
+@app.route("/api/board/<chat_id>/events")
+def api_board_events(chat_id):
+    if not re.fullmatch(r"[0-9a-f-]{36}", chat_id):
+        abort(400)
+    b = _board(chat_id)
+    q_: queue.Queue = queue.Queue(maxsize=500)
+    b["listeners"].append(q_)
+
+    def stream():
+        try:
+            yield "retry: 2000\n\n"
+            yield "data: " + json.dumps(_board_state_event(b)) + "\n\n"
+            while True:
+                try:
+                    yield "data: " + q_.get(timeout=15) + "\n\n"
+                except queue.Empty:
+                    yield ": ping\n\n"     # keep-alive
+        finally:
+            try:
+                b["listeners"].remove(q_)
+            except ValueError:
+                pass
+
+    return Response(stream(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-store",
+                             "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/board/<chat_id>/cmd", methods=["POST"])
+def api_board_cmd(chat_id):
+    """Human gestures on the board (tap a citation chip, pin, close…) —
+    mutate shared state and broadcast, same as model directives."""
+    if not re.fullmatch(r"[0-9a-f-]{36}", chat_id):
+        abort(400)
+    d = request.get_json(force=True)
+    action = d.get("action", "")
+    origin = (d.get("origin") or "")[:36]
+    b = _board(chat_id)
+    if action == "show":
+        manual = d.get("manual", "")
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", manual):
+            abort(400)
+        err = board_show(chat_id, manual, int(d.get("pdf_page", 0)), origin)
+        if err:
+            return err, 404
+    elif action in ("pin", "unpin", "close"):
+        with b["lock"]:
+            st = b["state"]
+            p = next((x for x in st["panels"] if x["id"] == d.get("id")), None)
+            if p:
+                if action == "close":
+                    st["panels"].remove(p)
+                else:
+                    p["pinned"] = (action == "pin")
+                st["seq"] += 1
+                _board_save(chat_id, st)
+        board_broadcast(chat_id, {**_board_state_event(b), "origin": origin})
+    elif action == "clear":
+        board_clear(chat_id, origin, everything=bool(d.get("all")))
+    else:
+        abort(400)
+    return "ok"
 
 
 # ---------------------------------------------------------------- search
