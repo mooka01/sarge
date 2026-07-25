@@ -31,23 +31,43 @@ that architecturally:
 
 ## What it looks like
 
-![Diagnostic chat with cited fault-tree guidance](docs/img/chat.png)
+**The tactical board** — SARGE's interface. Every page the AI cites deploys
+onto the evidence wall as the *actual page image*. The AI points at the
+manual; it never replaces it:
 
-| Manual search | Page-image authority |
+![Tactical board — live diagnosis with deployed manual pages](docs/img/board.jpg)
+
+| Full-screen viewer — zoom, then turn real manual pages | Phone — same session, board view |
 |---|---|
-| ![Search](docs/img/search.png) | ![Page viewer](docs/img/pageview.png) |
+| ![Page viewer](docs/img/viewer.jpg) | ![Mobile board](docs/img/board-mobile.jpg) |
 
+- **Board** (the default view) — a diagnosis conversation on the left, a
+  live evidence wall on the right. Cited pages deploy as panels (or tap any
+  citation chip to deploy it yourself); one tap brings a page forward full
+  screen, where you zoom with scroll/pinch/double-tap and swipe or arrow
+  through the *actual manual*. Pin what matters, sweep the rest. Any number
+  of screens — wall tablet, phone under the truck, laptop — join the same
+  session over the LAN and mirror live. Validation results print under
+  every answer; the panel state survives restarts.
+- **Voice** — hold-to-talk, or open-mic **full duplex** with barge-in
+  (talk over SARGE to interrupt), "stop" to cut playback, and an optional
+  *"SARGE, …"* wake word. Substantial answers are **spoken as a short
+  brief** — what was found, what just landed on the board, the one next
+  step — while the full workup renders on screen only. The spoken channel
+  never carries a spec number: SARGE deploys the page and has you read the
+  value off the board with your own eyes. Free out of the box (the
+  browser's built-in speech engines); set `ELEVENLABS_API_KEY` in your
+  environment for a premium voice — pay-per-use on your own key, which
+  never leaves your machine.
+- **Search** — direct manual search across the whole corpus, every hit
+  linked to its page image.
 
-- **Diagnose** — a chat (above): "slow air buildup, 8 minutes to 120 psi." Each turn
-  retrieves relevant manual pages (keyword + semantic search), the AI answers
-  with clickable citations that open the actual page image, and validation
-  results print under every message. Conversations persist in a sidebar.
-- **Search** — direct manual search across the whole corpus, every hit linked
-  to its page image.
+![Manual search across the corpus](docs/img/search.jpg)
+
 - **Intake** — a structured complaint form (category-adaptive measurement
-  fields) that files a record and auto-starts a diagnosis.
-- **Help post** — one click drafts an honest, structured "call for help" for
-  a forum or owners group from the current conversation.
+  fields) that files a record and auto-starts a board diagnosis.
+- **Help post** — 📢 drafts an honest, structured "call for help" for a
+  forum or owners group from the current session.
 
 ## Setup — the easy way (Windows, no software knowledge needed)
 
@@ -106,8 +126,14 @@ modified truck. (Starts blank — assumed stock until you say otherwise.)
 
 ```sh
 set ANTHROPIC_API_KEY=sk-ant-...   # or use Ollama offline mode
+set ELEVENLABS_API_KEY=...         # optional premium voice; omit = free browser voice
 python app.py                      # → http://127.0.0.1:8383
 ```
+
+Voice input uses the browser's free speech engine (Chrome/Edge/Android;
+iOS is unreliable) and requires a secure context — `localhost` works as-is;
+to use the mic from a phone on the LAN/Tailscale, serve over HTTPS (e.g.
+Tailscale's built-in certs). Spoken replies work everywhere.
 
 CLI equivalents: `query.py` (search), `diagnose.py` (one-shot test card,
 `--forums` adds live Steel Soldiers search), `compare.py` (A/B a question
@@ -121,7 +147,12 @@ PDFs → ingest (per-page text, printed page numbers, paragraph headings)
 query → hybrid retrieval (rank fusion)
       → Claude / Ollama, restricted to retrieved pages + as-built dossier
       → validation: citations exist? numbers verbatim in cited pages?
-      → UI: answer + red flags + links to page images (the authority)
+      → board: answer + flags; cited pages deploy as page-image panels,
+        SSE-synced to every screen on the session
+voice → browser ASR (push-to-talk / open mic / wake word)
+      → same pipeline, same validation
+      → spoken BRIEF (never a spec number) + on-screen detail;
+        TTS = free browser voice, or ElevenLabs via a local key-safe relay
 ```
 
 Design rationale, tier system (TM > forums > anecdotes), and roadmap:

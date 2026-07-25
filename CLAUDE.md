@@ -19,6 +19,12 @@ Canonical dossier: [AS_BUILT_CONFIGURATION.md](AS_BUILT_CONFIGURATION.md). Key d
 ## Conventions
 
 - POC scope: air system vertical slice only (see brief §6). Don't build wide.
+- The web UI is the tactical board (`templates/board.html`, served raw at
+  `/`): the model drives evidence panels with inline `[[SHOW:MANUAL|PAGE]]` /
+  `[[CLEAR]]` directives (executed server-side, validated against the index,
+  stripped from display), and voice replies speak a brief — never a spec
+  number; specs go on the board. Full contract and shipped state:
+  [VOICE_WHITEBOARD_DESIGN.md](VOICE_WHITEBOARD_DESIGN.md).
 - Chunking splits at work-package boundaries, never page counts; preserve manual number, printed page number, WP/paragraph in metadata; every chunk carries a tier tag.
 - SQLite + local embeddings; no heavy infrastructure.
 - Downloaded TM PDFs and generated page images/OCR output live under `corpus/` and are gitignored (large binaries); the ingest scripts and metadata schemas are committed.
