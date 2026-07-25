@@ -205,6 +205,14 @@ button { font: inherit; }
   transition: all .12s;
 }
 .chip:hover { background: rgba(83,217,255,.25); box-shadow: 0 0 10px var(--cyan-faint); }
+.vsplit {
+  display: flex; align-items: center; gap: .6rem; margin: .6rem 0 .3rem;
+  font-size: 8.5px; letter-spacing: .26em; color: var(--ink-dim);
+  text-transform: uppercase; white-space: nowrap;
+}
+.vsplit::before, .vsplit::after {
+  content: ""; flex: 1; border-top: 1px dashed var(--cyan-dim);
+}
 #statusline {
   min-height: 20px; padding: .15rem .9rem; font-size: 10px;
   letter-spacing: .2em; color: var(--amber); text-transform: uppercase;
@@ -842,6 +850,8 @@ function esc(s) {
 }
 function renderRich(text) {
   let h = esc(text);
+  h = h.replace(/\n?={5}DETAIL={5}\n?/g,
+    '<div class="vsplit"><span>▼ full detail — screen only</span></div>');
   h = h.replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
   h = h.replace(/\[\[([A-Za-z0-9._-]+)\|(\d+)\]\]/g, (_, m, p) =>
     '<button type="button" class="chip" data-m="' + m + '" data-p="' + p +
@@ -1582,6 +1592,7 @@ $("ttsTest").onclick = () => {
 
 function stripForSpeech(t) {
   return t
+    .replace(/={5}DETAIL={5}/g, " ")
     .replace(/\[\[SHOW:[^\]]*\]\]|\[\[CLEAR\]\]/g, " ")
     .replace(/\[\[([A-Za-z0-9._-]+)\|(\d+)\]\]/g, " ")
     .replace(/\*\*/g, "")
@@ -1595,11 +1606,21 @@ function stripForSpeech(t) {
     .replace(/\s{2,}/g, " ");
 }
 /* sentence-buffered streaming: speak as sentences complete, not at end */
+/* Two-channel voice: everything before =====DETAIL===== is the spoken
+   brief; the detail after it streams to the screen unspoken. Replies
+   with no marker are spoken in full (quick conversational turns). */
+const DETAIL_MARK = "=====DETAIL=====";
 let ttsStream = null;
-function ttsStreamStart() { speech.cancel(); ttsStream = { buf: "" }; }
+function ttsStreamStart() { speech.cancel(); ttsStream = { buf: "", done: false }; }
 function ttsStreamFeed(text) {
-  if (!ttsStream) return;
+  if (!ttsStream || ttsStream.done) return;
   ttsStream.buf += text;
+  const cut = ttsStream.buf.indexOf(DETAIL_MARK);
+  if (cut !== -1) {                       /* brief complete — flush, go quiet */
+    speakText(stripForSpeech(ttsStream.buf.slice(0, cut)).trim());
+    ttsStream.buf = ""; ttsStream.done = true;
+    return;
+  }
   let i;
   while ((i = ttsStream.buf.search(/[.!?:]\s|\n/)) !== -1) {
     const sentence = ttsStream.buf.slice(0, i + 1);
@@ -1609,7 +1630,7 @@ function ttsStreamFeed(text) {
 }
 function ttsStreamEnd(problems) {
   if (!ttsStream) return;
-  speakText(stripForSpeech(ttsStream.buf).trim());
+  if (!ttsStream.done) speakText(stripForSpeech(ttsStream.buf).trim());
   if (problems && problems.length)
     speakText("Validation flagged " + problems.length +
               (problems.length > 1 ? " items" : " item") +
