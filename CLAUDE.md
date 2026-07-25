@@ -25,13 +25,11 @@ Canonical dossier: [AS_BUILT_CONFIGURATION.md](AS_BUILT_CONFIGURATION.md). Key d
 - Intake sessions log to JSON (no work-order system in POC).
 - No Facebook scraping automation, ever. Forum crawling respects robots.txt/ToS.
 
-## Contributed-document intake (export control)
+## Export control and document acquisition
 
-Distribution Statement A material is published information and outside the EAR ([15 CFR 734.7](https://www.ecfr.gov/current/title-15/subtitle-B/chapter-VII/subchapter-C/part-734/section-734.7)) — the entire A0 corpus is this, and needs no handling restrictions.
+Distribution Statement A material is published information and outside the EAR ([15 CFR 734.7](https://www.ecfr.gov/current/title-15/subtitle-B/chapter-VII/subchapter-C/part-734/section-734.7)) — the entire A0 corpus is this, and needs no handling restrictions. Unarmored FMTV maintenance data that is *not* public-release is EAR ECCN 0E606, not ITAR (USML Category VII covers armored/armed combat vehicles; Note 1 routes other ground vehicles to ECCN 0A606).
 
-Unarmored FMTV maintenance data that is *not* public-release is EAR ECCN 0E606, not ITAR (USML Category VII covers armored/armed combat vehicles; Note 1 routes other ground vehicles to ECCN 0A606). Consequences:
-
-- **Distribution A only.** Contributions come in via the Dropbox file request (https://www.dropbox.com/request/jhy5o5v056zncbfbku3d — owner's free 2 GB Dropbox, so no disc images); GitHub issue as the fallback for oversize transfers. The most-wanted item, the A1 RPSTL TM 9-2320-392-24P, is expected to be Distribution A.
-- **Restricted material is not accepted, by any route.** Anything with a Distribution B–F statement, a CUI marking, or an export warning is refused rather than handled. An encrypted-transfer path was considered and removed: it was lawful under [15 CFR 734.18(a)(5)](https://www.law.cornell.edu/cfr/text/15/734.18), but the only document it served (the -23&P IETM) is low value here, so the intake surface isn't worth carrying. Don't reintroduce it.
+- **No community document intake exists, and none should be reintroduced.** The public A1 documentation request, the Dropbox file request, the GitHub-issue transfer fallback, and the earlier encrypted path were all removed (July 2026). A1-series documents are pursued through a FOIA request to TACOM instead (see `foia/`, local-only); FOIA-released records are public releases and corpus-eligible.
+- **Restricted material is never handled.** Anything with a Distribution B–F statement, a CUI marking, or an export warning stays out of the corpus, the repo, releases, issues, and PRs.
 - Owner-held restricted or copyrighted docs (Cat/Allison/WABCO) stay local: never committed, never in a release, never attached to an issue or PR. Publishing *is* the export, and GitHub attachment URLs survive issue deletion.
 - Never solicit material on the basis of contributor anonymity — a documentation request must not read as encouraging anyone to defeat attribution or breach their own obligations.

@@ -24,3 +24,6 @@ ocr_batch.err
 config.json
 truck.json
 AS_BUILT_CONFIGURATION.md
+
+# Personal correspondence (FOIA requests etc.) — never publish
+foia/

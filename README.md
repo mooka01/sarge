@@ -125,54 +125,13 @@ query → hybrid retrieval (rank fusion)
 Design rationale, tier system (TM > forums > anecdotes), and roadmap:
 [PROJECT_BRIEF.md](PROJECT_BRIEF.md).
 
-## Wanted: FMTV A1 documentation
+## Corpus policy
 
-The A0 set (TM 9-2320-366) is fully indexed. The A1 gaps, in priority order:
-
-1. **TM 9-2320-392-24P — the A1 RPSTL.** The most useful thing you can send.
-   A0 procedures mostly carry over to an A1; A0 part numbers don't. RPSTLs
-   are usually Distribution A, so this one can ship to everybody.
-2. **A1 electrical schematics and chassis wiring**, including the vehicle
-   data bus.
-3. **A1-specific MWOs and TBs.**
-4. **The -23&P IETM.** Welcome, but low priority — most of its value is the
-   3126E engine and electronics, already covered here by factory Cat
-   documentation (RENR1367, SENR9525, HEUI systems operation). Don't go to
-   any trouble for it.
-
-**What we can accept — Distribution A only**
-
-Check the cover page. If it reads **"DISTRIBUTION STATEMENT A — Approved
-for public release; distribution is unlimited"** and carries no
-export-control warning, it's published information
-([15 CFR 734.7](https://www.ecfr.gov/current/title-15/subtitle-B/chapter-VII/subchapter-C/part-734/section-734.7))
-and can be shared openly. That covers the RPSTL and most of what's wanted
-above.
-
-Anything else — Distribution B through F, a CUI marking, or an export
-warning ("…export is restricted by the Arms Export Control Act…") — we do
-not accept, by any route. That material is export-controlled, and posting
-it publicly is an unauthorized release. This project doesn't handle it at
-all.
-
-Also don't send anything classified, anything you'd have to take from a
-government or contractor system you don't own, or anything you're under a
-contract or NDA not to share. No truck manual is worth your job.
-
-**How to send it**
-
-Upload the file here (no account needed):
-**https://www.dropbox.com/request/jhy5o5v056zncbfbku3d**
-
-PDFs as they are; paper-manual photos or a folder of files as a single zip.
-Include a photo or screenshot of the cover page so the markings are
-visible. If it's too big for the drop (a couple of GB or more),
-[open an issue](../../issues/new) instead and we'll sort out a transfer.
-
-Nothing under a restrictive distribution statement or export marking is ever
-committed to this repo or attached to a release. The published indexes
-contain public-domain Distribution A manuals exclusively — see
-`ingest/export_public_index.py`.
+The published indexes contain public-domain Distribution A manuals
+exclusively — see `ingest/export_public_index.py`. Nothing under a
+restrictive distribution statement or export marking is ever committed to
+this repo or attached to a release. This project does not solicit or accept
+document contributions.
 
 ## License
 
