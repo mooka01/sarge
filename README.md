@@ -4,6 +4,8 @@
 
 Built around a 2003 M1083A1; works for any LMTV/MTV variant — or, with your own manuals, any documented vehicle.
 
+![SARGE — manual-grounded AI diagnosis for FMTV trucks](docs/img/hero.jpg)
+
 **The idea:** AI is genuinely useful for vehicle diagnosis, but no AI model
 can be trusted with torque specs and brake procedures. This system enforces
 that architecturally:
